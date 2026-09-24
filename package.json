@@ -1,0 +1,15 @@
+{
+  "name": "app-name",
+  "private": true,
+  "workspaces": [
+    "apps/mobile",
+    "packages/shared",
+    "worker"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "worker": "npm run start -w worker",
+    "mobile": "npm run start -w mobile"
+  }
+}

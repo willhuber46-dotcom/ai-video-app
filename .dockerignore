@@ -1,0 +1,5 @@
+**/node_modules
+apps
+.git
+**/.env
+worker/tmp
