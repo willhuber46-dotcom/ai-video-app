@@ -61,11 +61,13 @@ export async function unregisterPushNotifications(): Promise<void> {
   await AsyncStorage.removeItem(TOKEN_KEY);
 }
 
-/** Tapping a "batch ready" notification opens the Batch tab. */
+/** Tapping a notification opens the right tab: Batch for "ready", Cuts for "expiring". */
 export function useNotificationTaps() {
   useEffect(() => {
     const open = (response: Notifications.NotificationResponse | null) => {
-      if (response?.notification.request.content.data?.batchId) router.navigate('/');
+      const data = response?.notification.request.content.data;
+      if (data?.screen === 'cuts') router.navigate('/cuts');
+      else if (data?.batchId) router.navigate('/');
     };
     // The app may have been launched by tapping the notification.
     Notifications.getLastNotificationResponseAsync().then(open);

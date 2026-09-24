@@ -42,6 +42,7 @@ function RootNavigator() {
             headerBackTitle: 'Back',
           }}
         />
+        <Stack.Screen name="settings" options={{ headerShown: true, title: 'Settings', headerBackTitle: 'Profile' }} />
       </Stack.Protected>
       <Stack.Protected guard={!session}>
         <Stack.Screen name="(auth)" />

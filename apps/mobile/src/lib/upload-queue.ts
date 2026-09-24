@@ -124,6 +124,10 @@ export async function resumePendingUploads(videos: VideoSummary[]): Promise<void
   if (finished.length) await updatePending((p) => finished.forEach((id) => delete p[id]));
 }
 
+export async function pendingUploadCount(): Promise<number> {
+  return Object.keys(await loadPending()).length;
+}
+
 /** Clears everything, e.g. on sign out. */
 export async function clearPendingUploads(): Promise<void> {
   await updatePending((p) => Object.keys(p).forEach((id) => delete p[id]));

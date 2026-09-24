@@ -1,7 +1,6 @@
 import {
   captionsFromTranscript,
   EMPTY_OVERLAYS,
-  hasOverlays,
   newId,
   textFromSuggestion,
   zoomAt,
@@ -11,8 +10,6 @@ import {
   type TextOverlay,
   type Zoom,
 } from '@app/shared';
-import { File, Paths } from 'expo-file-system';
-import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useRef, useState } from 'react';
@@ -30,7 +27,8 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { usePlayerPlaying, usePlayerTime, useVideoDuration } from '@/hooks/use-player';
 import { useTheme } from '@/hooks/use-theme';
-import { fetchEditorData, requestRender, saveOverlays, waitForRender, type EditorData } from '@/lib/overlays';
+import { fetchEditorData, saveOverlays, type EditorData } from '@/lib/overlays';
+import { ensurePhotosPermission, saveCutToCameraRoll } from '@/lib/save';
 import { fetchVideo, formatDuration, signedCutUrl, type VideoSummary } from '@/lib/videos';
 
 type Tool = 'captions' | 'text' | 'zoom';
@@ -234,24 +232,11 @@ export default function EditorScreen() {
   async function saveToCameraRoll() {
     if (!video?.output_path) return;
     try {
-      const permission = await MediaLibrary.requestPermissionsAsync(true);
-      if (!permission.granted) {
+      if (!(await ensurePhotosPermission())) {
         Alert.alert('Allow access to Photos', 'We need permission to save videos to your camera roll.');
         return;
       }
-      let path = video.output_path;
-      if (hasOverlays(doc)) {
-        setSaveState('preparing');
-        const renderId = await requestRender(id, doc);
-        const render = await waitForRender(renderId);
-        path = render.output_path!;
-      }
-      setSaveState('downloading');
-      const file = await File.downloadFileAsync(await signedCutUrl(path, 600), new File(Paths.cache, `${id}.mp4`), {
-        idempotent: true,
-      });
-      await MediaLibrary.Asset.create(file.uri);
-      file.delete();
+      await saveCutToCameraRoll({ id, outputPath: video.output_path, overlays: doc }, setSaveState);
       Alert.alert('Saved', 'Your video is in your camera roll, ready to post.');
     } catch (err) {
       Alert.alert("Couldn't save", err instanceof Error ? err.message : 'Please try again.');
@@ -259,6 +244,7 @@ export default function EditorScreen() {
       setSaveState('idle');
     }
   }
+
 
   if (error) {
     return (

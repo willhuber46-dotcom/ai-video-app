@@ -9,7 +9,7 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 | 1. Core | Sign up / log in, Batch tab with single-clip upload, Talking Mode cutting, preview, save to camera roll | **Built** |
 | 2. Editing tools | Auto Captions, Auto Zoom, Suggested Text, safe zones | **Built** |
 | 3. Batching | Up to 10 videos, per-video mode, "Set all to...", background uploads, progress, push | **Built** |
-| 4. Tabs | Cuts tab, Profile, Settings, 30-day auto-delete | Placeholders only |
+| 4. Tabs | Cuts tab, Profile, Settings, 30-day auto-delete | **Built** (plan and credits are placeholders until Phase 7) |
 | 5. More modes | No Talking, Voiceover, Before & After, Unboxing / ASMR, Multiple Clips | Shown as "Coming soon" |
 | 6. Create tab | In-app camera | Placeholder only |
 | 7. Money | Credits, plans, payments, tutorial | Not started |
@@ -43,6 +43,19 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 - **Batches (Phase 3)**: **Add Videos** opens the camera roll with multi-select, up to 10 videos per batch. Each video gets its own mode and pacing from a sheet that shows every mode's description, and **Set all to…** applies one choice to every video. **Edit N videos** creates the batch, then starts every upload at once. Each batch shows live progress ("3 of 10 done") and a status per video (Uploading %, Editing, Done, Failed). Failed videos get a **Retry** button: it re-uploads from the phone if the upload failed, or re-queues the file already on the server if the edit failed.
 - **Background uploads**: uploads go to signed upload URLs, so they don't depend on the login session (which expires after an hour), through iOS background URL sessions. A storage trigger queues each video the moment its file lands, so an upload that finishes after the app was suspended or killed still gets edited. Pending uploads are saved on the phone and resume the next time the Batch tab opens. On Android, uploads continue while the app is in memory and resume on the next open otherwise.
 - **Push notifications**: the app asks for permission when you start your first batch and registers an Expo push token. After each video, the worker checks whether it was the last one in its batch; `complete_batch()` makes that true exactly once. It then sends "All 10 videos are ready ✂️" (or "8 of 10 are ready, 2 need another try") to your devices. Tapping it opens the Batch tab. Signing out removes the phone's token.
+- **Cuts tab (Phase 4)**: every finished edit in a grid, grouped by batch, newest first. Each thumbnail shows the mode, the length, and a red "Deletes in 2 days" badge in a cut's last 3 days. Tap a cut to open the editor. **Select** (or long-press) to delete one or many; that removes the cut, its thumbnail and any final renders. **Save all** saves a whole batch to the camera roll, rendering each cut's captions, text and zooms first.
+- **Profile and Settings**: Profile shows your name, cuts made (a lifetime count; tap it to open Cuts), your plan, cuts this month, and a gear icon for Settings. Settings follows the spec top to bottom:
+  - **Account**: name and email. Changing the email sends a confirmation link.
+  - **Subscription**: your plan, with a dropdown where paid plans show as "Coming soon".
+  - **Preferences**: "I record in", which the worker uses for transcription.
+  - **Support**: help and contact by email, "Refresh app data / clear storage" (refused while uploads still need their files), and Replay tutorial (coming soon).
+  - **Legal**: links to the privacy policy and terms.
+  - **Sign out**, and **Delete account** behind two confirmations.
+- **30-day auto-delete and account deletion**: once a minute, one worker (chosen by a lease in the database) does the housekeeping:
+  - It pushes "3 cuts will be deleted in 3 days"; tapping it opens Cuts.
+  - It deletes expired cuts with all their files.
+  - It clears failed or abandoned uploads older than 30 days.
+  - It carries out account deletions: it empties the user's storage folders, then deletes the login, which removes all their data.
 - **How edits are applied**: every edit is saved to `videos.overlays` as you go, and the app draws it live over the player. **Save to camera roll** queues a render, and the worker burns the same document into the MP4. Captions and text are drawn with the same fonts (Google Fonts TTFs bundled in both) and the same layout rules from `packages/shared`, with color emoji. Zooms use the same easing curve in the preview and in FFmpeg.
 - **AI suggestions**: while cutting the video, the worker shows Claude a few stills plus the transcript. Claude names the product, writes 3 text hooks with emoji, and picks zoom moments with where the product sits in the frame. They're stored in `videos.ai_suggestions`. Without an Anthropic key, the worker still suggests zooms at sentence starts but offers no text ideas.
 - **`packages/shared`**: mode names and descriptions, pacing options, statuses and row types, plus all the overlay layout math (caption grouping, zoom easing, safe zones, fonts).
@@ -109,7 +122,7 @@ Without a project id, the app still works but skips push registration.
 ### 4. Mobile app
 
 ```bash
-cp apps/mobile/.env.example apps/mobile/.env   # Supabase URL + anon key
+cp apps/mobile/.env.example apps/mobile/.env   # Supabase URL + anon key; optional support email and legal URLs
 npm run mobile                                 # Expo dev server
 ```
 

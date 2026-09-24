@@ -35,6 +35,8 @@ export function loadWorkerConfig() {
     expoAccessToken: process.env.EXPO_ACCESS_TOKEN || undefined,
     pollIntervalMs: number('WORKER_POLL_MS', 3000),
     concurrency: number('WORKER_CONCURRENCY', 1),
+    /** How often to run expiry warnings, 30-day deletion and account deletions. */
+    maintenanceIntervalMs: number('WORKER_MAINTENANCE_MS', 60_000),
     tmpDir: process.env.WORKER_TMP_DIR ?? './tmp',
   };
 }

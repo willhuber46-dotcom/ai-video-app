@@ -5,6 +5,8 @@ export type ClipType = 'single' | 'multiple';
 export type ModeInfo = {
   key: EditMode;
   name: string;
+  /** Fits on a thumbnail badge. */
+  shortName: string;
   /** Shown in the mode picker so users understand what the mode does. */
   description: string;
   /** Extra note shown under the description, e.g. for modes that ignore audio. */
@@ -18,6 +20,7 @@ export const MODES: readonly ModeInfo[] = [
   {
     key: 'talking',
     name: 'Talking Mode',
+    shortName: 'Talking',
     description:
       'For videos where you talk to the camera. We cut out the pauses, dead air, and retakes so only your best parts stay in.',
     bestClipType: 'single',
@@ -26,6 +29,7 @@ export const MODES: readonly ModeInfo[] = [
   {
     key: 'no_talking',
     name: 'No Talking Mode',
+    shortName: 'No Talking',
     description:
       "For videos where you're just showing off a product, like outfits, home decor, or gadgets. We ignore the audio and cut to your best angles and moments.",
     note: "This mode doesn't use audio.",
@@ -35,6 +39,7 @@ export const MODES: readonly ModeInfo[] = [
   {
     key: 'voiceover',
     name: 'Voiceover Mode',
+    shortName: 'Voiceover',
     description:
       'Film your product clips, then record your voice separately. We match your clips to what you’re saying.',
     bestClipType: 'multiple',
@@ -43,6 +48,7 @@ export const MODES: readonly ModeInfo[] = [
   {
     key: 'before_after',
     name: 'Before & After Mode',
+    shortName: 'Before & After',
     description:
       'For transformations like cleaning, beauty, hair, or organizing. We find your before and after moments and add a smooth transition between them.',
     bestClipType: 'multiple',
@@ -51,6 +57,7 @@ export const MODES: readonly ModeInfo[] = [
   {
     key: 'unboxing_asmr',
     name: 'Unboxing / ASMR Mode',
+    shortName: 'Unboxing',
     description:
       'For unboxings and satisfying product videos. We keep the good sounds (tearing, clicking, pouring) and cut the slow parts.',
     bestClipType: 'multiple',

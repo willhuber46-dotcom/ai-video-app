@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 
 import { loadWorkerConfig } from './config';
 import { claimNextRender, claimNextVideo, processRender, processVideo, type JobDeps } from './job';
+import { runMaintenance } from './maintenance';
 import { ExpoPushSender } from './notify';
 import { ClaudeRetakeDetector, HeuristicRetakeDetector, ResilientRetakeDetector } from './retakes';
 import { ClaudeSuggestionGenerator, HeuristicSuggestionGenerator, ResilientSuggestionGenerator } from './suggestions';
@@ -61,8 +62,23 @@ async function loop(slot: number) {
   }
 }
 
+// Housekeeping on a timer; the lease keeps it to one worker at a time.
+let maintaining = false;
+const maintenanceTimer = setInterval(async () => {
+  if (maintaining || stopping) return;
+  maintaining = true;
+  try {
+    await runMaintenance(deps.db, deps.push, Math.ceil(config.maintenanceIntervalMs / 1000));
+  } catch (err) {
+    console.error('Maintenance failed', err);
+  } finally {
+    maintaining = false;
+  }
+}, config.maintenanceIntervalMs);
+
 console.log(
   `Worker started: concurrency ${config.concurrency}, retakes via ${config.anthropicEnabled ? 'Claude' : 'heuristic'}`,
 );
 await Promise.all(Array.from({ length: config.concurrency }, (_, i) => loop(i)));
+clearInterval(maintenanceTimer);
 console.log('Worker stopped');
