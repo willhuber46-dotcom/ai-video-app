@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { FONT_SOURCES } from '@/constants/fonts';
 import { AuthProvider, useAuth } from '@/lib/auth';
+import { registerForPushNotifications, useNotificationTaps } from '@/lib/notifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -15,6 +16,13 @@ function RootNavigator() {
   // Caption and text fonts; a failed load falls back to system fonts.
   const [fontsLoaded, fontError] = useFonts(FONT_SOURCES);
   const ready = !loading && (fontsLoaded || !!fontError);
+  useNotificationTaps();
+
+  // Keep this device's push token current; only prompts when a batch starts.
+  const userId = session?.user.id;
+  useEffect(() => {
+    if (userId) void registerForPushNotifications({ prompt: false });
+  }, [userId]);
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();

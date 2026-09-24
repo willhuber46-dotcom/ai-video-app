@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 
 import { loadWorkerConfig } from './config';
 import { claimNextRender, claimNextVideo, processRender, processVideo, type JobDeps } from './job';
+import { ExpoPushSender } from './notify';
 import { ClaudeRetakeDetector, HeuristicRetakeDetector, ResilientRetakeDetector } from './retakes';
 import { ClaudeSuggestionGenerator, HeuristicSuggestionGenerator, ResilientSuggestionGenerator } from './suggestions';
 import { DeepgramTranscriber } from './transcribe';
@@ -22,6 +23,7 @@ const deps: JobDeps = {
   suggestions: config.anthropicEnabled
     ? new ResilientSuggestionGenerator(new ClaudeSuggestionGenerator())
     : new HeuristicSuggestionGenerator(),
+  push: new ExpoPushSender(config.expoAccessToken),
   tmpDir: config.tmpDir,
 };
 

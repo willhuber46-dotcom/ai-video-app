@@ -9,6 +9,7 @@ import { CUT_RETENTION_DAYS, STORAGE_BUCKETS, type RenderRow, type VideoRow } fr
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { renderCost, type CostEntry } from './costs';
+import { notifyIfBatchComplete, type PushSender } from './notify';
 import { renderFinal } from './render';
 import type { RetakeDetector } from './retakes';
 import type { SuggestionGenerator } from './suggestions';
@@ -20,6 +21,7 @@ export type JobDeps = {
   transcriber: Transcriber;
   retakes: RetakeDetector;
   suggestions: SuggestionGenerator;
+  push: PushSender;
   tmpDir: string;
 };
 
@@ -97,6 +99,15 @@ export async function processVideo(video: VideoRow, deps: JobDeps): Promise<void
     await db.from('videos').update({ status: 'failed', error: message }).eq('id', video.id);
   } finally {
     await rm(workDir, { recursive: true, force: true });
+  }
+
+  // Last video of its batch? Let the user know, even if they closed the app.
+  if (video.batch_id) {
+    try {
+      if (await notifyIfBatchComplete(db, video.batch_id, deps.push)) console.log(`Batch ${video.batch_id} finished`);
+    } catch (err) {
+      console.warn(`Could not send batch notification for ${video.batch_id}`, err);
+    }
   }
 }
 

@@ -8,7 +8,7 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 | --- | --- | --- |
 | 1. Core | Sign up / log in, Batch tab with single-clip upload, Talking Mode cutting, preview, save to camera roll | **Built** |
 | 2. Editing tools | Auto Captions, Auto Zoom, Suggested Text, safe zones | **Built** |
-| 3. Batching | Up to 10 videos, per-video mode, "Set all to...", background uploads, progress, push | Not started |
+| 3. Batching | Up to 10 videos, per-video mode, "Set all to...", background uploads, progress, push | **Built** |
 | 4. Tabs | Cuts tab, Profile, Settings, 30-day auto-delete | Placeholders only |
 | 5. More modes | No Talking, Voiceover, Before & After, Unboxing / ASMR, Multiple Clips | Shown as "Coming soon" |
 | 6. Create tab | In-app camera | Placeholder only |
@@ -40,6 +40,9 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
   - **Text**: the AI's hooks (e.g. "the best fall sweats 🍂") with the alternatives as one-tap swaps. You can edit the words, font (5 choices), color, box or plain style, size, and when it shows, and drag it anywhere.
   - **Zoom**: each zoom is a marker on the timeline that you can drag, lengthen, shorten, change the strength of, or delete. Tap the video to aim a zoom at the product, or add your own zoom at the playhead.
   - **Safe zones**: text and captions can't be placed where TikTok's top bar, side buttons or caption go, and faint guides show those areas while you edit.
+- **Batches (Phase 3)**: **Add Videos** opens the camera roll with multi-select, up to 10 videos per batch. Each video gets its own mode and pacing from a sheet that shows every mode's description, and **Set all to…** applies one choice to every video. **Edit N videos** creates the batch, then starts every upload at once. Each batch shows live progress ("3 of 10 done") and a status per video (Uploading %, Editing, Done, Failed). Failed videos get a **Retry** button: it re-uploads from the phone if the upload failed, or re-queues the file already on the server if the edit failed.
+- **Background uploads**: uploads go to signed upload URLs, so they don't depend on the login session (which expires after an hour), through iOS background URL sessions. A storage trigger queues each video the moment its file lands, so an upload that finishes after the app was suspended or killed still gets edited. Pending uploads are saved on the phone and resume the next time the Batch tab opens. On Android, uploads continue while the app is in memory and resume on the next open otherwise.
+- **Push notifications**: the app asks for permission when you start your first batch and registers an Expo push token. After each video, the worker checks whether it was the last one in its batch; `complete_batch()` makes that true exactly once. It then sends "All 10 videos are ready ✂️" (or "8 of 10 are ready, 2 need another try") to your devices. Tapping it opens the Batch tab. Signing out removes the phone's token.
 - **How edits are applied**: every edit is saved to `videos.overlays` as you go, and the app draws it live over the player. **Save to camera roll** queues a render, and the worker burns the same document into the MP4. Captions and text are drawn with the same fonts (Google Fonts TTFs bundled in both) and the same layout rules from `packages/shared`, with color emoji. Zooms use the same easing curve in the preview and in FFmpeg.
 - **AI suggestions**: while cutting the video, the worker shows Claude a few stills plus the transcript. Claude names the product, writes 3 text hooks with emoji, and picks zoom moments with where the product sits in the frame. They're stored in `videos.ai_suggestions`. Without an Anthropic key, the worker still suggests zooms at sentence starts but offers no text ideas.
 - **`packages/shared`**: mode names and descriptions, pacing options, statuses and row types, plus all the overlay layout math (caption grouping, zoom easing, safe zones, fonts).
@@ -93,7 +96,17 @@ docker run --env-file worker/.env app-worker
 
 Any container host works (Fly.io, Railway, Render, ECS). Scale by running more containers or raising `WORKER_CONCURRENCY`, because the queue hands each video to exactly one worker.
 
-### 3. Mobile app
+### 3. Push notifications
+
+Pushes go through Expo's push service, which needs an EAS project and credentials:
+
+1. `cd apps/mobile && npx eas-cli init`. This adds `extra.eas.projectId` to the app config.
+2. `npx eas-cli credentials`: add an APNs key for iOS and an FCM key for Android. EAS walks you through both.
+3. Optional: if you turn on "enhanced push security" in Expo, set `EXPO_ACCESS_TOKEN` in `worker/.env`.
+
+Without a project id, the app still works but skips push registration.
+
+### 4. Mobile app
 
 ```bash
 cp apps/mobile/.env.example apps/mobile/.env   # Supabase URL + anon key

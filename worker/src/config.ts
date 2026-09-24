@@ -31,6 +31,8 @@ export function loadWorkerConfig() {
     deepgramApiKey: required('DEEPGRAM_API_KEY'),
     /** Optional: without it, retakes are found with the built-in heuristic. */
     anthropicEnabled: Boolean(process.env.ANTHROPIC_API_KEY),
+    /** Optional: only needed if "enhanced push security" is on in your Expo account. */
+    expoAccessToken: process.env.EXPO_ACCESS_TOKEN || undefined,
     pollIntervalMs: number('WORKER_POLL_MS', 3000),
     concurrency: number('WORKER_CONCURRENCY', 1),
     tmpDir: process.env.WORKER_TMP_DIR ?? './tmp',

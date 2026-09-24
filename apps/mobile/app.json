@@ -55,7 +55,13 @@
           ]
         }
       ],
-      "expo-video"
+      "expo-video",
+      [
+        "expo-notifications",
+        {
+          "color": "#FE2C55"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -8,7 +8,8 @@ import { formatDuration, type VideoSummary } from '@/lib/videos';
 
 const LABELS: Record<VideoStatus, string> = {
   uploading: 'Uploading',
-  queued: 'Waiting to edit',
+  // Waiting for a worker; to the user it's all part of editing.
+  queued: 'Editing',
   editing: 'Editing',
   done: 'Done',
   failed: 'Failed',
@@ -17,19 +18,23 @@ const LABELS: Record<VideoStatus, string> = {
 export function VideoStatusRow({
   video,
   uploadProgress,
+  stalled,
   onPress,
 }: {
   video: VideoSummary;
   /** 0–1 while this device is uploading the video. */
   uploadProgress?: number;
+  /** Still "uploading" on the server, but nothing is sending it. */
+  stalled?: boolean;
   onPress?: () => void;
 }) {
   const theme = useTheme();
-  const working = video.status === 'uploading' || video.status === 'queued' || video.status === 'editing';
+  const working = !stalled && (video.status === 'uploading' || video.status === 'queued' || video.status === 'editing');
   const statusColor =
     video.status === 'done' ? theme.success : video.status === 'failed' ? theme.danger : theme.textSecondary;
   let label = LABELS[video.status];
   if (video.status === 'uploading' && uploadProgress != null) label += ` ${Math.round(uploadProgress * 100)}%`;
+  if (stalled) label = 'Upload paused';
 
   return (
     <Pressable
