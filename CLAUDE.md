@@ -4,9 +4,9 @@ AI video editor for TikTok Shop affiliates. The spec is in `docs/SPEC.md` and ge
 
 - `apps/mobile`: Expo app. Read `apps/mobile/AGENTS.md` before touching Expo APIs, because SDK 57 changed many of them.
 - `worker`: Node/TS + FFmpeg job runner. The pure cutting logic is in `src/cuts.ts`.
-- `packages/shared`: types and mode definitions shared by both.
+- `packages/shared`: types, mode definitions, and the overlay layout math shared by both. The app preview (`apps/mobile/src/components/editor`) and the worker renderer (`worker/src/overlay-render.ts`, `render.ts`) must stay in sync with it.
 - `supabase/migrations`: schema, RLS and the storage and queue setup. Add a new migration file; don't edit applied ones.
 
 Every AI edit is a suggestion the user can change or remove. Keep that true for new features.
 
-Checks: `npm run typecheck`, `npm test`, `npm run lint -w mobile`.
+Checks: `npm run typecheck`, `npm test`, `npm run lint -w mobile`. Format with Prettier (`.prettierrc.json`).

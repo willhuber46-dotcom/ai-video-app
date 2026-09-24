@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Word } from '../src/cuts';
 import { probe } from '../src/ffmpeg';
 import { HeuristicRetakeDetector } from '../src/retakes';
+import { HeuristicSuggestionGenerator } from '../src/suggestions';
 import { editTalkingVideo, UserFacingError } from '../src/talking';
 import type { Transcriber } from '../src/transcribe';
 
@@ -67,6 +68,7 @@ describe('editTalkingVideo', () => {
       language: 'en',
       transcriber: new FakeTranscriber(words),
       retakes: new HeuristicRetakeDetector(),
+      suggestions: new HeuristicSuggestionGenerator(),
     });
 
     expect(result.decisions.retakeSource).toBe('heuristic');
@@ -85,6 +87,11 @@ describe('editTalkingVideo', () => {
     expect(out.duration).toBeLessThan(expected + 0.15);
     expect(result.sourceDuration).toBeCloseTo(12, 0);
     expect((await stat(result.thumbnailPath)).size).toBeGreaterThan(0);
+    expect([result.outputWidth, result.outputHeight]).toEqual([1080, 1920]);
+
+    // Without the AI, zoom suggestions still come from sentence starts.
+    expect(result.suggestions.source).toBe('heuristic');
+    expect(result.suggestions.zooms[0]).toMatchObject({ start: 0.08, scale: 1.3, x: 0.5, y: 0.45 });
 
     // Captions line up with the edited timeline.
     expect(result.transcript[0]).toEqual({ word: 'This', start: 0.08, end: 0.38 });
@@ -107,6 +114,7 @@ describe('editTalkingVideo', () => {
         language: 'en',
         transcriber: new FakeTranscriber([]),
         retakes: new HeuristicRetakeDetector(),
+      suggestions: new HeuristicSuggestionGenerator(),
       }),
     ).rejects.toBeInstanceOf(UserFacingError);
   }, 60_000);

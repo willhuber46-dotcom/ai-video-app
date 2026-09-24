@@ -1,7 +1,7 @@
 import { pricing } from './config';
 
 export type CostEntry = {
-  kind: 'transcription' | 'ai' | 'compute';
+  kind: 'transcription' | 'ai' | 'compute' | 'render';
   provider: string;
   units: number;
   unit: string;
@@ -17,6 +17,10 @@ export function computeCost(seconds: number): CostEntry {
     unit: 'second',
     usd: (seconds / 3600) * pricing.workerPerHour,
   };
+}
+
+export function renderCost(seconds: number): CostEntry {
+  return { ...computeCost(seconds), kind: 'render' };
 }
 
 export function claudeCost(model: string, inputTokens: number, outputTokens: number): CostEntry {

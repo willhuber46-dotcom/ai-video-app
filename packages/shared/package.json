@@ -9,5 +9,13 @@
   },
   "devDependencies": {
     "typescript": "~6.0.3"
+  },
+  "dependencies": {
+    "@expo-google-fonts/courier-prime": "^0.4.1",
+    "@expo-google-fonts/inter": "^0.4.2",
+    "@expo-google-fonts/montserrat": "^0.4.2",
+    "@expo-google-fonts/pacifico": "^0.4.1",
+    "@expo-google-fonts/playfair-display": "^0.4.2",
+    "@expo-google-fonts/poppins": "^0.4.1"
   }
 }

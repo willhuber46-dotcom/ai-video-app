@@ -11,6 +11,7 @@ import { parseArgs } from 'node:util';
 import type { Pacing } from '@app/shared';
 
 import { ClaudeRetakeDetector, HeuristicRetakeDetector, ResilientRetakeDetector } from './retakes';
+import { ClaudeSuggestionGenerator, HeuristicSuggestionGenerator, ResilientSuggestionGenerator } from './suggestions';
 import { editTalkingVideo } from './talking';
 import { DeepgramTranscriber } from './transcribe';
 
@@ -45,9 +46,12 @@ try {
     retakes: process.env.ANTHROPIC_API_KEY
       ? new ResilientRetakeDetector(new ClaudeRetakeDetector())
       : new HeuristicRetakeDetector(),
+    suggestions: process.env.ANTHROPIC_API_KEY
+      ? new ResilientSuggestionGenerator(new ClaudeSuggestionGenerator())
+      : new HeuristicSuggestionGenerator(),
   });
   await copyFile(result.outputPath, out);
-  await writeFile(out.replace(/\.mp4$/, '.json'), JSON.stringify(result.decisions, null, 2));
+  await writeFile(out.replace(/\.mp4$/, '.json'), JSON.stringify({ decisions: result.decisions, suggestions: result.suggestions }, null, 2));
   const usd = result.costs.reduce((s, c) => s + c.usd, 0);
   console.log(`${result.sourceDuration.toFixed(1)}s -> ${result.outputDuration.toFixed(1)}s`, result.decisions.removed);
   console.log(`Retakes: ${result.decisions.retakeSource}. Cost: $${usd.toFixed(4)}. Wrote ${out}`);

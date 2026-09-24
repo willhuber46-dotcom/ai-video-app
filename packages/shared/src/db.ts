@@ -1,4 +1,5 @@
 import type { ClipType, EditMode, Pacing } from './modes';
+import type { AiSuggestions, OverlayDoc } from './overlays';
 
 /**
  * Lifecycle of one video:
@@ -57,13 +58,34 @@ export type VideoRow = {
   output_path: string | null;
   thumbnail_path: string | null;
   output_duration_s: number | null;
+  output_width: number | null;
+  output_height: number | null;
   transcript: WordTiming[] | null;
   edit_decisions: EditDecisions | null;
+  /** The user's captions, text and zooms (Phase 2). */
+  overlays: OverlayDoc | null;
+  ai_suggestions: AiSuggestions | null;
   attempts: number;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
   expires_at: string | null;
+};
+
+export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed';
+
+/** A request to burn a video's overlays into a final MP4. */
+export type RenderRow = {
+  id: string;
+  video_id: string;
+  user_id: string;
+  overlays: OverlayDoc;
+  status: RenderStatus;
+  error: string | null;
+  output_path: string | null;
+  attempts: number;
+  created_at: string;
+  completed_at: string | null;
 };
 
 export type ProfileRow = {

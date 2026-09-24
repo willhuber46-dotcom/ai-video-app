@@ -3,8 +3,9 @@ import { mkdir } from 'node:fs/promises';
 import { createClient } from '@supabase/supabase-js';
 
 import { loadWorkerConfig } from './config';
-import { claimNextVideo, processVideo, type JobDeps } from './job';
+import { claimNextRender, claimNextVideo, processRender, processVideo, type JobDeps } from './job';
 import { ClaudeRetakeDetector, HeuristicRetakeDetector, ResilientRetakeDetector } from './retakes';
+import { ClaudeSuggestionGenerator, HeuristicSuggestionGenerator, ResilientSuggestionGenerator } from './suggestions';
 import { DeepgramTranscriber } from './transcribe';
 
 const config = loadWorkerConfig();
@@ -18,6 +19,9 @@ const deps: JobDeps = {
   retakes: config.anthropicEnabled
     ? new ResilientRetakeDetector(new ClaudeRetakeDetector())
     : new HeuristicRetakeDetector(),
+  suggestions: config.anthropicEnabled
+    ? new ResilientSuggestionGenerator(new ClaudeSuggestionGenerator())
+    : new HeuristicSuggestionGenerator(),
   tmpDir: config.tmpDir,
 };
 
@@ -34,6 +38,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function loop(slot: number) {
   while (!stopping) {
     try {
+      // Final renders first: the user is waiting on them to save.
+      const render = await claimNextRender(deps.db);
+      if (render) {
+        console.log(`[slot ${slot}] Rendering ${render.id} for video ${render.video_id}`);
+        await processRender(render, deps);
+        continue;
+      }
       const video = await claimNextVideo(deps.db);
       if (!video) {
         await sleep(config.pollIntervalMs);

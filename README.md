@@ -7,7 +7,7 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1. Core | Sign up / log in, Batch tab with single-clip upload, Talking Mode cutting, preview, save to camera roll | **Built** |
-| 2. Editing tools | Auto Captions, Auto Zoom, Suggested Text, safe zones | Not started |
+| 2. Editing tools | Auto Captions, Auto Zoom, Suggested Text, safe zones | **Built** |
 | 3. Batching | Up to 10 videos, per-video mode, "Set all to...", background uploads, progress, push | Not started |
 | 4. Tabs | Cuts tab, Profile, Settings, 30-day auto-delete | Placeholders only |
 | 5. More modes | No Talking, Voiceover, Before & After, Unboxing / ASMR, Multiple Clips | Shown as "Coming soon" |
@@ -35,7 +35,14 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 
 - **`apps/mobile`**: Expo SDK 57 + Expo Router. Four native tabs (Create, Batch, Cuts, Profile). The upload streams the file from disk to Supabase Storage, and on iOS it keeps going if the user switches apps.
 - **`worker`**: a TypeScript job runner. Talking Mode transcribes with Deepgram Nova-3 (filler words kept on purpose), drops fillers, cuts pauses longer than the pacing allows (Tight / Natural / Loose), and removes retakes and false starts. Retakes are chosen by Claude (`claude-opus-5`, structured output), with a built-in heuristic as the fallback. Every kept range is encoded separately and joined losslessly, so audio stays in sync even on variable-frame-rate phone video. Each cut gets a tiny audio fade so there are no clicks.
-- **`packages/shared`**: mode names and descriptions, pacing options, statuses and row types used by both.
+- **Editing tools (Phase 2)**: the preview screen is an editor with **Auto Captions**, **Suggested Text** and **Auto Zoom** buttons along the bottom. Each button adds the AI's suggestion the first time you tap it, then opens its controls:
+  - **Captions**: three styles (bold pop-up words, clean minimal, highlighted keyword). You can fix or delete any word, and drag the captions up or down.
+  - **Text**: the AI's hooks (e.g. "the best fall sweats 🍂") with the alternatives as one-tap swaps. You can edit the words, font (5 choices), color, box or plain style, size, and when it shows, and drag it anywhere.
+  - **Zoom**: each zoom is a marker on the timeline that you can drag, lengthen, shorten, change the strength of, or delete. Tap the video to aim a zoom at the product, or add your own zoom at the playhead.
+  - **Safe zones**: text and captions can't be placed where TikTok's top bar, side buttons or caption go, and faint guides show those areas while you edit.
+- **How edits are applied**: every edit is saved to `videos.overlays` as you go, and the app draws it live over the player. **Save to camera roll** queues a render, and the worker burns the same document into the MP4. Captions and text are drawn with the same fonts (Google Fonts TTFs bundled in both) and the same layout rules from `packages/shared`, with color emoji. Zooms use the same easing curve in the preview and in FFmpeg.
+- **AI suggestions**: while cutting the video, the worker shows Claude a few stills plus the transcript. Claude names the product, writes 3 text hooks with emoji, and picks zoom moments with where the product sits in the frame. They're stored in `videos.ai_suggestions`. Without an Anthropic key, the worker still suggests zooms at sentence starts but offers no text ideas.
+- **`packages/shared`**: mode names and descriptions, pacing options, statuses and row types, plus all the overlay layout math (caption grouping, zoom easing, safe zones, fonts).
 - **`supabase/migrations`**: tables, row-level security, storage buckets and the job queue.
 
 ### Data and security
@@ -44,11 +51,12 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 - Storage paths are `<user id>/<video id>.<ext>`. Users can upload only into their own folder and read only their own cuts, through signed URLs.
 - Raw uploads are deleted as soon as a video finishes. A failed edit keeps the raw file so **Retry** works without uploading again.
 - `processing_costs` logs one row per billable step (Deepgram minutes, Claude tokens, worker seconds), so pricing can be set per video. Rates are configurable in `worker/.env`.
-- The worker also stores the kept words **on the edited timeline** (`videos.transcript`), ready for Phase 2 captions.
+- The worker stores the kept words **on the edited timeline** (`videos.transcript`); Auto Captions starts from them.
+- Overlays are saved through `save_overlays()` and renders are queued through `request_render()`. Both are database functions that check the video belongs to the caller and is finished. The worker takes renders before new edits, since the user is waiting on them. Only the newest final render per video is kept in storage.
 
 ## Setup
 
-Requirements: Node 22+, FFmpeg (for local worker runs), a Supabase project, a Deepgram API key, and optionally an Anthropic API key.
+Requirements: Node 22+, FFmpeg and a color emoji font (`fonts-noto-color-emoji` on Debian/Ubuntu) for local worker runs, a Supabase project, a Deepgram API key, and optionally an Anthropic API key.
 
 ```bash
 npm install
@@ -98,7 +106,7 @@ The app uses native modules (native tabs, background upload, media library), so 
 
 ```bash
 npm run typecheck                  # all packages
-npm test                           # worker: cutting logic + a real FFmpeg render
+npm test                           # worker: cutting + overlay logic, real FFmpeg renders
 npm run lint -w mobile
 ```
 
@@ -110,5 +118,6 @@ npm run lint -w mobile
 | Accounts, database, storage | Supabase (Postgres + RLS, Auth, Storage) |
 | Video processing | Node/TypeScript worker in Docker with FFmpeg |
 | Speech-to-text | Deepgram Nova-3 |
-| AI | Claude (`claude-opus-5`) for retakes now; suggested text and best moments later |
+| AI | Claude (`claude-opus-5`) for retakes, text hooks and zoom moments; best moments later |
+| Overlay rendering | `@napi-rs/canvas` (Skia) draws captions and text; FFmpeg handles zooms and compositing |
 | Payments | To decide in Phase 7 (RevenueCat is the usual choice for App Store + Play subscriptions) |

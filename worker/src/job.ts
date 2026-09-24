@@ -5,11 +5,13 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 
-import { CUT_RETENTION_DAYS, STORAGE_BUCKETS, type VideoRow } from '@app/shared';
+import { CUT_RETENTION_DAYS, STORAGE_BUCKETS, type RenderRow, type VideoRow } from '@app/shared';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import type { CostEntry } from './costs';
+import { renderCost, type CostEntry } from './costs';
+import { renderFinal } from './render';
 import type { RetakeDetector } from './retakes';
+import type { SuggestionGenerator } from './suggestions';
 import { editTalkingVideo, UserFacingError } from './talking';
 import type { Transcriber } from './transcribe';
 
@@ -17,6 +19,7 @@ export type JobDeps = {
   db: SupabaseClient;
   transcriber: Transcriber;
   retakes: RetakeDetector;
+  suggestions: SuggestionGenerator;
   tmpDir: string;
 };
 
@@ -49,6 +52,7 @@ export async function processVideo(video: VideoRow, deps: JobDeps): Promise<void
       language: profile?.record_language ?? 'en',
       transcriber: deps.transcriber,
       retakes: deps.retakes,
+      suggestions: deps.suggestions,
     });
 
     const outputPath = `${video.user_id}/${video.id}.mp4`;
@@ -66,7 +70,10 @@ export async function processVideo(video: VideoRow, deps: JobDeps): Promise<void
         thumbnail_path: thumbnailPath,
         source_duration_s: result.sourceDuration,
         output_duration_s: result.outputDuration,
+        output_width: result.outputWidth,
+        output_height: result.outputHeight,
         transcript: result.transcript,
+        ai_suggestions: result.suggestions,
         edit_decisions: result.decisions,
         completed_at: now.toISOString(),
         expires_at: new Date(now.getTime() + CUT_RETENTION_DAYS * 86_400_000).toISOString(),
@@ -107,7 +114,61 @@ async function upload(db: SupabaseClient, bucket: string, objectPath: string, fi
   if (error) throw error;
 }
 
-async function logCosts(db: SupabaseClient, video: VideoRow, costs: CostEntry[]) {
+export async function claimNextRender(db: SupabaseClient): Promise<RenderRow | null> {
+  const { data, error } = await db.rpc('claim_next_render');
+  if (error) throw error;
+  return (data as RenderRow[] | null)?.[0] ?? null;
+}
+
+/** Burns a video's captions, text and zooms into a final MP4 for saving. */
+export async function processRender(render: RenderRow, deps: Pick<JobDeps, 'db' | 'tmpDir'>): Promise<void> {
+  const { db } = deps;
+  const started = Date.now();
+  const workDir = path.join(deps.tmpDir, `render-${render.id}`);
+  await mkdir(workDir, { recursive: true });
+
+  try {
+    const { data: video, error } = await db.from('videos').select('*').eq('id', render.video_id).single<VideoRow>();
+    if (error) throw error;
+    if (!video.output_path) throw new UserFacingError('This video is no longer available.');
+
+    const input = path.join(workDir, 'cut.mp4');
+    await download(db, STORAGE_BUCKETS.cuts, video.output_path, input);
+    const output = path.join(workDir, 'final.mp4');
+    await renderFinal({ input, doc: render.overlays, output, workDir });
+
+    const outputPath = `${video.user_id}/${video.id}-final-${render.id}.mp4`;
+    await upload(db, STORAGE_BUCKETS.cuts, outputPath, output, 'video/mp4');
+    const { error: updateError } = await db
+      .from('renders')
+      .update({ status: 'done', output_path: outputPath, completed_at: new Date().toISOString() })
+      .eq('id', render.id);
+    if (updateError) throw updateError;
+
+    // Only the newest final render is kept.
+    const { data: older } = await db
+      .from('renders')
+      .select('id, output_path')
+      .eq('video_id', video.id)
+      .neq('id', render.id)
+      .not('output_path', 'is', null);
+    if (older?.length) {
+      await db.storage.from(STORAGE_BUCKETS.cuts).remove(older.map((r) => r.output_path as string));
+      await db.from('renders').update({ output_path: null }).in('id', older.map((r) => r.id));
+    }
+
+    await logCosts(db, video, [renderCost((Date.now() - started) / 1000)]);
+    console.log(`Rendered ${render.id} for video ${video.id}`);
+  } catch (err) {
+    console.error(`Render failed ${render.id}`, err);
+    const message = err instanceof UserFacingError ? err.message : 'Something went wrong while saving. Please try again.';
+    await db.from('renders').update({ status: 'failed', error: message }).eq('id', render.id);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
+async function logCosts(db: SupabaseClient, video: Pick<VideoRow, 'id' | 'user_id'>, costs: CostEntry[]) {
   const { error } = await db.from('processing_costs').insert(
     costs.map((c) => ({
       video_id: video.id,

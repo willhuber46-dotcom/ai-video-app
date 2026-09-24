@@ -4,10 +4,10 @@ import path from 'node:path';
 
 import type { KeepRange } from '@app/shared';
 
-const FFMPEG = process.env.FFMPEG_PATH ?? 'ffmpeg';
+export const FFMPEG = process.env.FFMPEG_PATH ?? 'ffmpeg';
 const FFPROBE = process.env.FFPROBE_PATH ?? 'ffprobe';
 
-function run(bin: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+export function run(bin: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -31,18 +31,20 @@ export type ProbeResult = {
   hasVideo: boolean;
   hasAudio: boolean;
   fps: number;
+  width: number;
+  height: number;
 };
 
 export async function probe(file: string): Promise<ProbeResult> {
   const { stdout } = await run(FFPROBE, [
     '-v', 'error',
-    '-show_entries', 'format=duration:stream=codec_type,avg_frame_rate',
+    '-show_entries', 'format=duration:stream=codec_type,avg_frame_rate,width,height',
     '-of', 'json',
     file,
   ]);
   const data = JSON.parse(stdout) as {
     format?: { duration?: string };
-    streams?: { codec_type?: string; avg_frame_rate?: string }[];
+    streams?: { codec_type?: string; avg_frame_rate?: string; width?: number; height?: number }[];
   };
   const streams = data.streams ?? [];
   const video = streams.find((s) => s.codec_type === 'video');
@@ -53,6 +55,8 @@ export async function probe(file: string): Promise<ProbeResult> {
     hasVideo: Boolean(video),
     hasAudio: streams.some((s) => s.codec_type === 'audio'),
     fps: Number.isFinite(fps) && fps > 0 ? fps : 30,
+    width: video?.width ?? 0,
+    height: video?.height ?? 0,
   };
 }
 
@@ -148,6 +152,17 @@ export async function renderKeepRanges(opts: {
   const listFile = path.join(workDir, 'segments.txt');
   await writeFile(listFile, segments.map((s) => `file '${path.resolve(s)}'`).join('\n'));
   await run(FFMPEG, ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', '-movflags', '+faststart', output]);
+}
+
+/** Small JPEG stills at the given times, for the AI to look at. */
+export async function extractFrames(video: string, times: number[], workDir: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const [i, t] of times.entries()) {
+    const out = path.join(workDir, `frame-${i}.jpg`);
+    await run(FFMPEG, ['-y', '-ss', t.toFixed(3), '-i', video, '-frames:v', '1', '-vf', 'scale=384:-2', '-q:v', '5', out]);
+    files.push(out);
+  }
+  return files;
 }
 
 export async function makeThumbnail(video: string, output: string, atSeconds: number): Promise<void> {
