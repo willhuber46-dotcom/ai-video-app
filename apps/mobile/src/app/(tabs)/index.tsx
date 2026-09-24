@@ -16,10 +16,10 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth';
-import { registerForPushNotifications } from '@/lib/notifications';
-import { enqueueUploads, resumePendingUploads, retryUpload, useUploadStates } from '@/lib/upload-queue';
+import { newDraft, setDrafts, useDrafts, type Draft } from '@/lib/drafts';
+import { draftProblem, startBatch } from '@/lib/start-batch';
+import { resumePendingUploads, retryUpload, useUploadStates } from '@/lib/upload-queue';
 import {
-  createBatch,
   deleteVideo,
   fetchRecentVideos,
   retryVideo,
@@ -31,19 +31,6 @@ const POLL_MS = 3000;
 const BATCHES_SHOWN = 5;
 /** Clips combined into one video (Multiple Clips). */
 const MAX_CLIPS = 10;
-
-type Draft = {
-  key: string;
-  /** One clip = Single Clip; more = Multiple Clips. */
-  clips: PickedVideo[];
-  voice: PickedVideo | null;
-  thumbnail: string | null;
-  mode: EditMode;
-  pacing: Pacing;
-};
-
-let draftCounter = 0;
-const draftKey = () => `draft-${Date.now()}-${draftCounter++}`;
 
 /** Opens the camera roll for up to `limit` videos, turning away ones over 10 minutes. */
 async function pickVideos(limit: number): Promise<PickedVideo[]> {
@@ -74,11 +61,6 @@ async function pickVideos(limit: number): Promise<PickedVideo[]> {
     }));
 }
 
-/** Seconds of footage in a draft, or null if a clip's length is unknown. */
-function draftDuration(draft: Draft): number | null {
-  return draft.clips.every((c) => c.duration != null) ? draft.clips.reduce((s, c) => s + (c.duration ?? 0), 0) : null;
-}
-
 /** Which draft the mode sheet is editing, or 'all' for "Set all to...". */
 type SheetTarget = { kind: 'all' } | { kind: 'item'; key: string };
 
@@ -97,7 +79,7 @@ function groupByBatch(videos: VideoSummary[]): VideoSummary[][] {
 export default function BatchScreen() {
   const { session } = useAuth();
   const uploads = useUploadStates();
-  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const drafts = useDrafts();
   const [sheet, setSheet] = useState<SheetTarget | null>(null);
   const [starting, setStarting] = useState(false);
   const [recent, setRecent] = useState<VideoSummary[]>([]);
@@ -137,18 +119,6 @@ export default function BatchScreen() {
         .then((t) => setDrafts((d) => d.map((x) => (x.key === draft.key ? { ...x, thumbnail: t.uri } : x))))
         .catch(() => {});
     }
-  }
-
-  function newDraft(clips: PickedVideo[], like?: Draft): Draft {
-    // New videos start with the mode of the last one, so "Set all" is rarely needed.
-    return {
-      key: draftKey(),
-      clips,
-      voice: null,
-      thumbnail: null,
-      mode: like?.mode ?? 'talking',
-      pacing: like?.pacing ?? 'natural',
-    };
   }
 
   async function addVideos() {
@@ -218,36 +188,18 @@ export default function BatchScreen() {
     setSheet(null);
   }
 
-  async function startBatch() {
+  async function start() {
     if (!session || drafts.length === 0) return;
-    const missingVoice = drafts.findIndex((d) => d.mode === 'voiceover' && !d.voice);
-    if (missingVoice >= 0) {
-      Alert.alert(
-        'Add your voice',
-        `Video ${missingVoice + 1} is in Voiceover Mode. Record or choose a voice recording.`,
-      );
-      return;
-    }
-    const tooLong = drafts.findIndex((d) => (draftDuration(d) ?? 0) > MAX_INPUT_SECONDS + 1);
-    if (tooLong >= 0) {
-      Alert.alert('Too long', `Video ${tooLong + 1}'s clips add up to more than 10 minutes. Remove some clips.`);
+    const problem = draftProblem(drafts);
+    if (problem) {
+      Alert.alert(problem.title, problem.message);
       return;
     }
     setStarting(true);
     try {
-      // Ask once, at the moment it's useful: so we can say when the batch is done.
-      void registerForPushNotifications({ prompt: true });
-      const created = await createBatch(
-        drafts.map((d) => ({
-          clips: d.clips,
-          voice: d.mode === 'voiceover' ? d.voice : null,
-          mode: d.mode,
-          pacing: d.pacing,
-        })),
-      );
-      await enqueueUploads(created.map((c) => ({ videoId: c.row.id, userId: c.row.user_id, files: c.files })));
+      const rows = await startBatch(drafts);
       setDrafts([]);
-      setRecent((r) => [...created.map((c) => c.row), ...r]);
+      setRecent((r) => [...rows, ...r]);
     } catch (err) {
       Alert.alert("Couldn't start editing", err instanceof Error ? err.message : 'Please try again.');
     } finally {
@@ -343,7 +295,7 @@ export default function BatchScreen() {
           {drafts.length > 0 && (
             <Button
               title={drafts.length === 1 ? 'Edit 1 video' : `Edit ${drafts.length} videos`}
-              onPress={startBatch}
+              onPress={start}
               loading={starting}
             />
           )}

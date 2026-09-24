@@ -11,7 +11,7 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 | 3. Batching | Up to 10 videos, per-video mode, "Set all to...", background uploads, progress, push | **Built** |
 | 4. Tabs | Cuts tab, Profile, Settings, 30-day auto-delete | **Built** (plan and credits are placeholders until Phase 7) |
 | 5. More modes | No Talking, Voiceover, Before & After, Unboxing / ASMR, Multiple Clips | **Built** |
-| 6. Create tab | In-app camera | Placeholder only |
+| 6. Create tab | In-app camera | **Built** |
 | 7. Money | Credits, plans, payments, tutorial | Not started |
 
 ## How it works
@@ -63,6 +63,12 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
   - **Unboxing / ASMR**: the audio is analysed in 0.1 s windows for loudness and sharp onsets (tearing, clicks, pours). It keeps the lively stretches with their original sound, cuts the quiet handling, and adds light text (editable).
   - **Fallbacks**: without an Anthropic key, every mode falls back to its signal-based choices: sharpness and motion, clips in turn per line, or the first and last moments.
   - **Uploads**: each clip and the voice upload as their own file under a `clips` row. The storage trigger queues the video once the last one lands, and Retry only re-sends the files that didn't make it.
+- **Create tab (Phase 6)**: a full-screen camera with 60s / 3m / 10m length options, a flash (torch) toggle and front/back flip. Flip is disabled while recording, since switching would end the recording. The camera only runs while the tab is open. The moment a recording stops, a sheet asks how to edit it (mode and pacing, with every mode's description). Then:
+  - **Edit now** starts a one-video batch and opens the Batch tab to show its progress.
+  - **Add to batch and record more** adds it to the batch (a "3 in batch ›" pill links there), so several recordings can be edited together.
+  - **Voiceover** recordings go to the batch, where the voice is added.
+  - **Also save the original to my camera roll** is a remembered switch. If starting the edit fails, the recording is kept in the batch instead of being lost.
+  - The Batch and Create tabs share one list of unsent videos (`lib/drafts.ts`) and one start-a-batch helper (`lib/start-batch.ts`).
 - **How edits are applied**: every edit is saved to `videos.overlays` as you go, and the app draws it live over the player. **Save to camera roll** queues a render, and the worker burns the same document into the MP4. Captions and text are drawn with the same fonts (Google Fonts TTFs bundled in both) and the same layout rules from `packages/shared`, with color emoji. Zooms use the same easing curve in the preview and in FFmpeg.
 - **AI suggestions**: while cutting the video, the worker shows Claude a few stills plus the transcript. Claude names the product, writes 3 text hooks with emoji, and picks zoom moments with where the product sits in the frame. They're stored in `videos.ai_suggestions`. Without an Anthropic key, the worker still suggests zooms at sentence starts but offers no text ideas.
 - **`packages/shared`**: mode names and descriptions, pacing options, statuses and row types, plus all the overlay layout math (caption grouping, zoom easing, safe zones, fonts).

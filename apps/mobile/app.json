@@ -40,8 +40,8 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow [App Name] to access your videos so you can pick ones to edit.",
-          "cameraPermission": false,
-          "microphonePermission": false
+          "cameraPermission": "Allow [App Name] to use the camera so you can film videos in the app.",
+          "microphonePermission": "Allow [App Name] to use the microphone so your videos have sound."
         }
       ],
       [
@@ -65,7 +65,15 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow [App Name] to use the microphone to record your voiceovers."
+          "microphonePermission": "Allow [App Name] to use the microphone so your videos have sound."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow [App Name] to use the camera so you can film videos in the app.",
+          "microphonePermission": "Allow [App Name] to use the microphone so your videos have sound.",
+          "recordAudioAndroid": true
         }
       ]
     ],
