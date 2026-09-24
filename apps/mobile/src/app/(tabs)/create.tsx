@@ -1,4 +1,4 @@
-import { BATCH_LIMIT, type EditMode, type Pacing } from '@app/shared';
+import type { EditMode, Pacing } from '@app/shared';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions, useMicrophonePermissions, type CameraType } from 'expo-camera';
 import * as MediaLibrary from 'expo-media-library';
@@ -15,9 +15,10 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { batchLimitOf, InsufficientCreditsError, useCredits } from '@/lib/billing';
 import { getDrafts, newDraft, setDrafts, useDrafts } from '@/lib/drafts';
 import { ensurePhotosPermission } from '@/lib/save';
-import { draftProblem, startBatch } from '@/lib/start-batch';
+import { draftProblem, showCreditsAlert, startBatch } from '@/lib/start-batch';
 import { formatDuration, type PickedVideo } from '@/lib/videos';
 
 const LENGTHS = [
@@ -64,6 +65,7 @@ function IconButton({
 export default function CreateScreen() {
   const theme = useTheme();
   const drafts = useDrafts();
+  const credits = useCredits();
   const camera = useRef<CameraView>(null);
   const [cameraPermission, requestCamera] = useCameraPermissions();
   const [micPermission, requestMic] = useMicrophonePermissions();
@@ -166,8 +168,12 @@ export default function CreateScreen() {
         router.navigate('/');
         return;
       }
-      if (getDrafts().length >= BATCH_LIMIT) {
-        Alert.alert('Batch is full', `A batch holds ${BATCH_LIMIT} videos. Start editing it on the Batch tab first.`);
+      const limit = batchLimitOf(credits);
+      if (getDrafts().length >= limit) {
+        Alert.alert(
+          'Batch is full',
+          `A batch holds ${limit} videos on your plan. Start editing it on the Batch tab first.`,
+        );
         return;
       }
       setDrafts((d) => [...d, draft]);
@@ -176,10 +182,12 @@ export default function CreateScreen() {
       // Don't lose the recording: park it in the batch instead.
       setDrafts((d) => [...d, draft]);
       setRecording(null);
-      Alert.alert(
-        "Couldn't start editing",
-        `${err instanceof Error ? err.message : 'Please try again.'} It's waiting on the Batch tab.`,
-      );
+      if (err instanceof InsufficientCreditsError) showCreditsAlert(err);
+      else
+        Alert.alert(
+          "Couldn't start editing",
+          `${err instanceof Error ? err.message : 'Please try again.'} It's waiting on the Batch tab.`,
+        );
     } finally {
       setBusy(false);
     }

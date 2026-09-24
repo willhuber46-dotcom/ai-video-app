@@ -43,7 +43,19 @@ export async function createBatch(items: BatchItem[]): Promise<CreatedVideo[]> {
   const { data: batch, error: batchError } = await supabase.from('batches').insert({}).select('id').single();
   if (batchError) throw batchError;
   const created: CreatedVideo[] = [];
-  // One insert per video keeps the order explicit; a batch is at most 10.
+  try {
+    await insertBatchVideos(batch.id, items, created);
+  } catch (err) {
+    // All or nothing: don't leave half a batch waiting for uploads that never start.
+    await supabase.from('videos').delete().eq('batch_id', batch.id);
+    await supabase.from('batches').delete().eq('id', batch.id);
+    throw err;
+  }
+  return created;
+}
+
+async function insertBatchVideos(batchId: string, items: BatchItem[], created: CreatedVideo[]): Promise<void> {
+  // One insert per video keeps the order explicit.
   for (const item of items) {
     const duration = item.clips.every((c) => c.duration != null)
       ? item.clips.reduce((sum, c) => sum + (c.duration ?? 0), 0)
@@ -51,7 +63,7 @@ export async function createBatch(items: BatchItem[]): Promise<CreatedVideo[]> {
     const { data, error } = await supabase
       .from('videos')
       .insert({
-        batch_id: batch.id,
+        batch_id: batchId,
         mode: item.mode,
         pacing: item.pacing,
         clip_type: item.clips.length > 1 ? 'multiple' : 'single',
@@ -83,7 +95,6 @@ export async function createBatch(items: BatchItem[]): Promise<CreatedVideo[]> {
       })),
     });
   }
-  return created;
 }
 
 const MIME_EXTENSIONS: Record<string, string> = {

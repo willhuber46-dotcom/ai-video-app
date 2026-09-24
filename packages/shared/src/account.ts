@@ -20,19 +20,6 @@ export function languageLabel(code: string): string {
   return RECORD_LANGUAGES.find((l) => l.code === code)?.label ?? code;
 }
 
-export type PlanKey = 'free' | 'pro' | 'business';
-
-/** Plans shown in Settings. Payments and credits arrive in Phase 7; until then only Free is selectable. */
-export const PLANS: readonly { key: PlanKey; label: string; available: boolean }[] = [
-  { key: 'free', label: 'Free', available: true },
-  { key: 'pro', label: 'Pro', available: false },
-  { key: 'business', label: 'Business', available: false },
-];
-
-export function planLabel(key: string): string {
-  return PLANS.find((p) => p.key === key)?.label ?? key;
-}
-
 const DAY_MS = 86_400_000;
 
 /** Whole days until a cut is deleted (0 = today), or null if it doesn't expire. */

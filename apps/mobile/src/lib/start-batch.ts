@@ -1,5 +1,8 @@
 import { MAX_INPUT_SECONDS } from '@app/shared';
+import { router } from 'expo-router';
+import { Alert } from 'react-native';
 
+import { InsufficientCreditsError, isInsufficientCredits, refreshCredits } from '@/lib/billing';
 import { draftDuration, type Draft } from '@/lib/drafts';
 import { registerForPushNotifications } from '@/lib/notifications';
 import { enqueueUploads } from '@/lib/upload-queue';
@@ -24,8 +27,16 @@ export function draftProblem(drafts: Draft[]): { title: string; message: string 
   return null;
 }
 
-/** Creates the batch and starts every upload. Returns the new video rows. */
+/**
+ * Creates the batch and starts every upload. Returns the new video rows.
+ * Throws InsufficientCreditsError when the plan can't cover every video.
+ */
 export async function startBatch(drafts: Draft[]): Promise<VideoSummary[]> {
+  // Friendly check first; the database enforces it too.
+  const credits = await refreshCredits();
+  if (credits && credits.available < drafts.length)
+    throw new InsufficientCreditsError(drafts.length, credits.available);
+
   // Ask once, at the moment it's useful: so we can say when the batch is done.
   void registerForPushNotifications({ prompt: true });
   const created = await createBatch(
@@ -35,7 +46,20 @@ export async function startBatch(drafts: Draft[]): Promise<VideoSummary[]> {
       mode: d.mode,
       pacing: d.pacing,
     })),
-  );
+  ).catch(async (err) => {
+    if (!isInsufficientCredits(err)) throw err;
+    const now = await refreshCredits();
+    throw new InsufficientCreditsError(drafts.length, now?.available ?? 0);
+  });
   await enqueueUploads(created.map((c) => ({ videoId: c.row.id, userId: c.row.user_id, files: c.files })));
+  void refreshCredits();
   return created.map((c) => c.row);
+}
+
+/** "Out of credits" with a way to get more. */
+export function showCreditsAlert(err: InsufficientCreditsError) {
+  Alert.alert('Not enough credits', `${err.message} Upgrade your plan or buy a credit pack to keep going.`, [
+    { text: 'Not now', style: 'cancel' },
+    { text: 'See plans', onPress: () => router.push('/plans') },
+  ]);
 }

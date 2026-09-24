@@ -1,5 +1,5 @@
 import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, router, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { StyleSheet, useColorScheme } from 'react-native';
@@ -7,7 +7,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { FONT_SOURCES } from '@/constants/fonts';
 import { AuthProvider, useAuth } from '@/lib/auth';
+import { refreshCredits } from '@/lib/billing';
 import { registerForPushNotifications, useNotificationTaps } from '@/lib/notifications';
+import { hasSeenTutorial } from '@/lib/tutorial';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -23,6 +25,15 @@ function RootNavigator() {
   useEffect(() => {
     if (userId) void registerForPushNotifications({ prompt: false });
   }, [userId]);
+
+  // Credits for the signed-in user, and the tutorial on first launch.
+  useEffect(() => {
+    if (!userId || !ready) return;
+    void refreshCredits();
+    hasSeenTutorial().then((seen) => {
+      if (!seen) router.push('/tutorial');
+    });
+  }, [userId, ready]);
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();
@@ -43,6 +54,8 @@ function RootNavigator() {
           }}
         />
         <Stack.Screen name="settings" options={{ headerShown: true, title: 'Settings', headerBackTitle: 'Profile' }} />
+        <Stack.Screen name="plans" options={{ headerShown: true, title: 'Plans & credits', headerBackTitle: 'Back' }} />
+        <Stack.Screen name="tutorial" options={{ presentation: 'fullScreenModal', gestureEnabled: false }} />
       </Stack.Protected>
       <Stack.Protected guard={!session}>
         <Stack.Screen name="(auth)" />

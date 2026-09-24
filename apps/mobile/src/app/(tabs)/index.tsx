@@ -1,4 +1,4 @@
-import { BATCH_LIMIT, MAX_INPUT_SECONDS, type EditMode, type Pacing } from '@app/shared';
+import { MAX_INPUT_SECONDS, type EditMode, type Pacing } from '@app/shared';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect } from 'expo-router';
@@ -17,7 +17,8 @@ import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth';
 import { newDraft, setDrafts, useDrafts, type Draft } from '@/lib/drafts';
-import { draftProblem, startBatch } from '@/lib/start-batch';
+import { batchLimitOf, InsufficientCreditsError, useCredits } from '@/lib/billing';
+import { draftProblem, showCreditsAlert, startBatch } from '@/lib/start-batch';
 import { resumePendingUploads, retryUpload, useUploadStates } from '@/lib/upload-queue';
 import {
   deleteVideo,
@@ -80,6 +81,8 @@ export default function BatchScreen() {
   const { session } = useAuth();
   const uploads = useUploadStates();
   const drafts = useDrafts();
+  const credits = useCredits();
+  const batchLimit = batchLimitOf(credits);
   const [sheet, setSheet] = useState<SheetTarget | null>(null);
   const [starting, setStarting] = useState(false);
   const [recent, setRecent] = useState<VideoSummary[]>([]);
@@ -111,7 +114,7 @@ export default function BatchScreen() {
     return () => clearInterval(id);
   }, [inProgress, refresh]);
 
-  const remaining = BATCH_LIMIT - drafts.length;
+  const remaining = Math.max(0, batchLimit - drafts.length);
 
   function withThumbnails(added: Draft[]) {
     for (const draft of added) {
@@ -142,7 +145,7 @@ export default function BatchScreen() {
       add(picked.slice(0, remaining).map((clip) => newDraft([clip], last)));
     };
     if (remaining === 0) {
-      Alert.alert('Batch is full', `A batch holds ${BATCH_LIMIT} videos.`);
+      Alert.alert('Batch is full', `A batch holds ${batchLimit} videos on your plan.`);
       return;
     }
     Alert.alert(`${picked.length} videos selected`, 'Edit them as separate videos, or combine them into one?', [
@@ -201,7 +204,8 @@ export default function BatchScreen() {
       setDrafts([]);
       setRecent((r) => [...rows, ...r]);
     } catch (err) {
-      Alert.alert("Couldn't start editing", err instanceof Error ? err.message : 'Please try again.');
+      if (err instanceof InsufficientCreditsError) showCreditsAlert(err);
+      else Alert.alert("Couldn't start editing", err instanceof Error ? err.message : 'Please try again.');
     } finally {
       setStarting(false);
     }
@@ -249,7 +253,7 @@ export default function BatchScreen() {
           <View style={styles.section}>
             <ThemedText type="subtitle">Batch</ThemedText>
             <ThemedText themeColor="textSecondary">
-              Add up to {BATCH_LIMIT} videos, pick a mode for each, and we&apos;ll edit them all at once.
+              Add up to {batchLimit} videos, pick a mode for each, and we&apos;ll edit them all at once.
             </ThemedText>
           </View>
 
@@ -257,7 +261,7 @@ export default function BatchScreen() {
             <View style={styles.section}>
               <View style={styles.row}>
                 <ThemedText type="smallBold">
-                  {drafts.length} of {BATCH_LIMIT} videos
+                  {drafts.length} of {batchLimit} videos
                 </ThemedText>
                 {drafts.length > 1 && (
                   <Button title="Set all to…" variant="secondary" onPress={() => setSheet({ kind: 'all' })} />
@@ -298,6 +302,16 @@ export default function BatchScreen() {
               onPress={start}
               loading={starting}
             />
+          )}
+          {drafts.length > 0 && credits && (
+            <ThemedText
+              type="small"
+              themeColor={credits.available < drafts.length ? undefined : 'textSecondary'}
+              style={styles.center}>
+              {credits.available < drafts.length
+                ? `You have ${credits.available} ${credits.available === 1 ? 'credit' : 'credits'} left. Remove some videos or get more credits.`
+                : `Uses ${drafts.length} of your ${credits.available} credits. You’re only charged for videos that finish.`}
+            </ThemedText>
           )}
 
           {batches.length > 0 && (
@@ -345,4 +359,5 @@ const styles = StyleSheet.create({
   content: { padding: Spacing.four, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.four },
   section: { gap: Spacing.two },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  center: { textAlign: 'center' },
 });

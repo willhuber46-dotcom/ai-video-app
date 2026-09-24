@@ -1,4 +1,3 @@
-import { planLabel } from '@app/shared';
 import { router, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useState } from 'react';
@@ -10,6 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth';
+import { useCredits } from '@/lib/billing';
 import { cutsThisMonth, fetchProfile, type Profile } from '@/lib/profile';
 
 function Stat({ label, value, onPress }: { label: string; value: string; onPress?: () => void }) {
@@ -34,6 +34,7 @@ export default function ProfileScreen() {
   const { session } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [monthCount, setMonthCount] = useState<number | null>(null);
+  const credits = useCredits();
   const userId = session?.user.id;
 
   useFocusEffect(
@@ -77,14 +78,18 @@ export default function ProfileScreen() {
               value={profile ? String(profile.cuts_made) : '–'}
               onPress={() => router.navigate('/cuts')}
             />
-            <Stat label="Plan" value={profile ? planLabel(profile.plan) : '–'} />
+            <Stat label="Plan" value={credits?.plan_label ?? '–'} onPress={() => router.push('/plans')} />
           </View>
           <View style={styles.stats}>
             <Stat label="Cuts this month" value={monthCount == null ? '–' : String(monthCount)} />
-            <Stat label="Credits left" value="–" />
+            <Stat
+              label="Credits left"
+              value={credits ? String(credits.available) : '–'}
+              onPress={() => router.push('/plans')}
+            />
           </View>
           <ThemedText type="small" themeColor="textSecondary">
-            Credits and paid plans are coming soon. For now, editing is free.
+            One credit = one finished video. Credits reset each month; failed videos don’t use one.
           </ThemedText>
         </ScrollView>
       </SafeAreaView>

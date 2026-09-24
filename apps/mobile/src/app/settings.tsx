@@ -1,4 +1,5 @@
-import { languageLabel, PLANS, planLabel, RECORD_LANGUAGES } from '@app/shared';
+import { languageLabel, RECORD_LANGUAGES } from '@app/shared';
+import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -12,6 +13,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth';
+import { useCredits } from '@/lib/billing';
 import { fetchProfile, updateProfile, type Profile } from '@/lib/profile';
 import { clearAppStorage, deleteAccount, signOut } from '@/lib/session';
 import { supabase } from '@/lib/supabase';
@@ -77,7 +79,8 @@ export default function SettingsScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState(session?.user.email ?? '');
-  const [sheet, setSheet] = useState<'plan' | 'language' | null>(null);
+  const [sheet, setSheet] = useState<'language' | null>(null);
+  const credits = useCredits();
   const [busy, setBusy] = useState<'name' | 'email' | 'delete' | null>(null);
 
   useEffect(() => {
@@ -217,8 +220,8 @@ export default function SettingsScreen() {
             <Row
               first
               label="Plan"
-              value={profile ? `${planLabel(profile.plan)} ▾` : '–'}
-              onPress={() => setSheet('plan')}
+              value={credits ? `${credits.plan_label} ▾` : '–'}
+              onPress={() => router.push('/plans')}
             />
           </Section>
 
@@ -245,7 +248,7 @@ export default function SettingsScreen() {
               }
             />
             <Row label="Refresh app data / clear storage" onPress={clearStorage} />
-            <Row label="Replay tutorial" value="Coming soon" disabled />
+            <Row label="Replay tutorial" onPress={() => router.push('/tutorial')} />
           </Section>
 
           <Section title="Legal">
@@ -258,19 +261,6 @@ export default function SettingsScreen() {
         </ScrollView>
       </SafeAreaView>
 
-      <SelectSheet
-        visible={sheet === 'plan'}
-        title="Plan"
-        value={profile?.plan ?? 'free'}
-        options={PLANS.map((p) => ({
-          value: p.key,
-          label: p.label,
-          disabled: !p.available,
-          note: p.available ? undefined : 'Coming soon',
-        }))}
-        onSelect={() => setSheet(null)}
-        onClose={() => setSheet(null)}
-      />
       <SelectSheet
         visible={sheet === 'language'}
         title="I record in"

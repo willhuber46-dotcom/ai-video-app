@@ -12,7 +12,7 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 | 4. Tabs | Cuts tab, Profile, Settings, 30-day auto-delete | **Built** (plan and credits are placeholders until Phase 7) |
 | 5. More modes | No Talking, Voiceover, Before & After, Unboxing / ASMR, Multiple Clips | **Built** |
 | 6. Create tab | In-app camera | **Built** |
-| 7. Money | Credits, plans, payments, tutorial | Not started |
+| 7. Money | Credits, plans, payments, tutorial | **Built** |
 
 ## How it works
 
@@ -69,6 +69,27 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
   - **Voiceover** recordings go to the batch, where the voice is added.
   - **Also save the original to my camera roll** is a remembered switch. If starting the edit fails, the recording is kept in the batch instead of being lost.
   - The Batch and Create tabs share one list of unsent videos (`lib/drafts.ts`) and one start-a-batch helper (`lib/start-batch.ts`).
+- **Credits and plans (Phase 7)**:
+  - One credit = one finished video, up to 10 minutes of footage.
+  - Starting a batch checks that enough credits are free, counting videos already in progress. A credit is only used when a video comes out **done**, so failed edits cost nothing. Monthly plan credits are used first, then pack credits, which never expire.
+  - Plans and packs live in the `plans` and `credit_packs` tables. The app reads them, so prices and allowances change without an app update.
+
+  | Plan | Price | Credits / month | Batch size |
+  |---|---|---|---|
+  | Free | $0 | 10 | 10 |
+  | Creator | $19.99/mo | 100 | 10 |
+  | Pro | $49.99/mo | 300 | 20 |
+  | 25-credit pack | $7.99 one-time | 25, never expire | – |
+  | 100-credit pack | $24.99 one-time | 100, never expire | – |
+
+  - Free credits top back up monthly. Paid credits reset on every paid invoice.
+- **Payments**: Stripe Checkout on the web. The app opens Stripe's hosted page in an in-app browser. The billing server (`worker/src/billing`) creates checkouts and customer-portal sessions and receives Stripe webhooks:
+  - `invoice.paid` starts a plan period.
+  - `checkout.session.completed` adds pack credits.
+  - `customer.subscription.deleted` / `updated` returns the user to Free.
+
+  Every grant is keyed to its Stripe id, so retried webhooks never grant twice. Switching or cancelling plans happens in Stripe's customer portal, so a user never has two subscriptions. The Plans screen (from Profile, Settings or the "out of credits" prompt) shows credits left, each plan, the packs, and "Manage subscription".
+- **Tutorial**: four swipeable slides on first launch (film or pick, choose a mode, we edit and notify you, tweak and save). "Replay tutorial" in Settings opens it again.
 - **How edits are applied**: every edit is saved to `videos.overlays` as you go, and the app draws it live over the player. **Save to camera roll** queues a render, and the worker burns the same document into the MP4. Captions and text are drawn with the same fonts (Google Fonts TTFs bundled in both) and the same layout rules from `packages/shared`, with color emoji. Zooms use the same easing curve in the preview and in FFmpeg.
 - **AI suggestions**: while cutting the video, the worker shows Claude a few stills plus the transcript. Claude names the product, writes 3 text hooks with emoji, and picks zoom moments with where the product sits in the frame. They're stored in `videos.ai_suggestions`. Without an Anthropic key, the worker still suggests zooms at sentence starts but offers no text ideas.
 - **`packages/shared`**: mode names and descriptions, pacing options, statuses and row types, plus all the overlay layout math (caption grouping, zoom easing, safe zones, fonts).
@@ -132,7 +153,30 @@ Pushes go through Expo's push service, which needs an EAS project and credential
 
 Without a project id, the app still works but skips push registration.
 
-### 4. Mobile app
+### 4. Payments (Stripe)
+
+1. Create a Stripe account and copy the secret key.
+2. Create the products and prices, and save their ids in the database:
+
+   ```bash
+   STRIPE_SECRET_KEY=sk_... npm run billing:setup -w worker
+   ```
+
+   It's safe to re-run. If you change a price in the `plans` or `credit_packs` table, run it again to create the new Stripe price.
+3. Run the billing server somewhere public over HTTPS, from the same Docker image as the worker:
+
+   ```bash
+   docker run --env-file worker/.env -p 8787:8787 app-worker npx tsx src/billing/main.ts
+   ```
+
+   It needs `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `BILLING_PUBLIC_URL` and the Supabase keys.
+4. In Stripe → Developers → Webhooks, add `<BILLING_PUBLIC_URL>/stripe/webhook` with these events: `checkout.session.completed`, `invoice.paid`, `customer.subscription.updated` and `customer.subscription.deleted`. Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
+5. In Stripe → Settings → Billing → Customer portal, allow switching between the Creator and Pro prices, and cancelling.
+6. In the app's `.env`, set `EXPO_PUBLIC_BILLING_URL` to the billing server.
+
+**Store rules**: Apple allows apps on the **US** App Store to link out to web payments (since the 2025 ruling); many other storefronts don't, and Google Play has its own rules for digital goods. Set `EXPO_PUBLIC_BILLING_MODE=hidden` for builds going where linking out isn't allowed. The app then shows plans and credits, but only points to your website (`EXPO_PUBLIC_BILLING_WEBSITE`). Check the current App Store and Play policies before you submit.
+
+### 5. Mobile app
 
 ```bash
 cp apps/mobile/.env.example apps/mobile/.env   # Supabase URL + anon key; optional support email and legal URLs

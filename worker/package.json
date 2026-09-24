@@ -8,13 +8,16 @@
     "dev": "tsx watch src/index.ts",
     "cut": "tsx --env-file-if-exists=.env src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "billing": "tsx --env-file-if-exists=.env src/billing/main.ts",
+    "billing:setup": "tsx --env-file-if-exists=.env src/billing/setup.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "@app/shared": "*",
     "@napi-rs/canvas": "^1.0.9",
     "@supabase/supabase-js": "^2.117.1",
+    "stripe": "^22.6.2",
     "tsx": "^4.20.0",
     "zod": "^4.1.0"
   },
