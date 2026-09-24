@@ -1,4 +1,4 @@
-import { PACING_OPTIONS, type EditMode, type Pacing } from '@app/shared';
+import { PACING_OPTIONS, usesPacing, type EditMode, type Pacing } from '@app/shared';
 import { useState } from 'react';
 import { Modal, ScrollView, StyleSheet, View } from 'react-native';
 
@@ -34,7 +34,7 @@ export function ModeSheet({
         <ScrollView contentContainerStyle={styles.content}>
           <ThemedText type="subtitle">{title}</ThemedText>
           <ModePicker value={mode} onChange={setMode} />
-          {mode === 'talking' && (
+          {usesPacing(mode) && (
             <View style={styles.section}>
               <ThemedText type="smallBold">Pacing</ThemedText>
               <SegmentedControl options={PACING_OPTIONS} value={pacing} onChange={setPacing} />

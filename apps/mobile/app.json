@@ -61,6 +61,12 @@
         {
           "color": "#FE2C55"
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow [App Name] to use the microphone to record your voiceovers."
+        }
       ]
     ],
     "experiments": {

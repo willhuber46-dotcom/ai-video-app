@@ -10,7 +10,7 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
 | 2. Editing tools | Auto Captions, Auto Zoom, Suggested Text, safe zones | **Built** |
 | 3. Batching | Up to 10 videos, per-video mode, "Set all to...", background uploads, progress, push | **Built** |
 | 4. Tabs | Cuts tab, Profile, Settings, 30-day auto-delete | **Built** (plan and credits are placeholders until Phase 7) |
-| 5. More modes | No Talking, Voiceover, Before & After, Unboxing / ASMR, Multiple Clips | Shown as "Coming soon" |
+| 5. More modes | No Talking, Voiceover, Before & After, Unboxing / ASMR, Multiple Clips | **Built** |
 | 6. Create tab | In-app camera | Placeholder only |
 | 7. Money | Credits, plans, payments, tutorial | Not started |
 
@@ -56,6 +56,13 @@ A mobile-first AI video editor for TikTok Shop affiliates: upload raw footage, p
   - It deletes expired cuts with all their files.
   - It clears failed or abandoned uploads older than 30 days.
   - It carries out account deletions: it empties the user's storage folders, then deletes the login, which removes all their data.
+- **Modes and Multiple Clips (Phase 5)**: all five modes work. A video can be one clip or up to 10 clips combined; when you pick several videos, the app asks whether to keep them separate or combine them. Every draft has **+ Add clips** and **Split into separate videos**. Clips filmed at different sizes are fitted to one vertical 1080x1920 frame (or 1920x1080 if most are landscape).
+  - **No Talking**: frames are analysed at 4 fps for sharpness and movement. Blurry windows and shaky ones are dropped, and Claude looks at the best candidate stills to pick the shots where the product shows clearly. The shots cut at a steady 2-second rhythm, about a third of the footage (6-30 s), with at least one shot per clip and in filmed order. The output is silent, and an aesthetic text hook is added (editable).
+  - **Voiceover**: the voice recording is transcribed and cleaned up like Talking Mode (pauses, fillers, retakes). Each line gets footage from the clip Claude says fits it best, and the clean voice goes on top. Captions come from the voice. The app can record the voice or take an audio file.
+  - **Before & After**: Claude picks the "before" and "after" stills from across the footage. The app renders a short shot of each, joined with a wipe, and adds "Before" and "After" labels you can edit or delete.
+  - **Unboxing / ASMR**: the audio is analysed in 0.1 s windows for loudness and sharp onsets (tearing, clicks, pours). It keeps the lively stretches with their original sound, cuts the quiet handling, and adds light text (editable).
+  - **Fallbacks**: without an Anthropic key, every mode falls back to its signal-based choices: sharpness and motion, clips in turn per line, or the first and last moments.
+  - **Uploads**: each clip and the voice upload as their own file under a `clips` row. The storage trigger queues the video once the last one lands, and Retry only re-sends the files that didn't make it.
 - **How edits are applied**: every edit is saved to `videos.overlays` as you go, and the app draws it live over the player. **Save to camera roll** queues a render, and the worker burns the same document into the MP4. Captions and text are drawn with the same fonts (Google Fonts TTFs bundled in both) and the same layout rules from `packages/shared`, with color emoji. Zooms use the same easing curve in the preview and in FFmpeg.
 - **AI suggestions**: while cutting the video, the worker shows Claude a few stills plus the transcript. Claude names the product, writes 3 text hooks with emoji, and picks zoom moments with where the product sits in the frame. They're stored in `videos.ai_suggestions`. Without an Anthropic key, the worker still suggests zooms at sentence starts but offers no text ideas.
 - **`packages/shared`**: mode names and descriptions, pacing options, statuses and row types, plus all the overlay layout math (caption grouping, zoom easing, safe zones, fonts).

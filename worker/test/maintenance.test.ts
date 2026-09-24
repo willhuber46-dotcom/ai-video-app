@@ -5,13 +5,16 @@ import { describe, expect, it } from 'vitest';
 import { deleteVideosWithFiles } from '../src/maintenance';
 
 /** Just enough of the Supabase client to record what gets deleted. */
-function fakeDb(renderPaths: (string | null)[]) {
+function fakeDb(renderPaths: (string | null)[], clipPaths: (string | null)[] = []) {
   const removed: Record<string, string[]> = {};
   const deletedRows: string[] = [];
   const db = {
     from: (table: string) => ({
       select: () => ({
-        in: async () => ({ data: renderPaths.map((output_path) => ({ output_path })), error: null }),
+        in: async () =>
+          table === 'clips'
+            ? { data: clipPaths.map((raw_path) => ({ raw_path })), error: null }
+            : { data: renderPaths.map((output_path) => ({ output_path })), error: null },
       }),
       delete: () => ({
         in: async (_col: string, ids: string[]) => {
@@ -34,13 +37,13 @@ function fakeDb(renderPaths: (string | null)[]) {
 
 describe('deleteVideosWithFiles', () => {
   it('removes cuts, thumbnails, final renders and raw uploads before the rows', async () => {
-    const { db, removed, deletedRows } = fakeDb(['u/a-final-1.mp4', null]);
+    const { db, removed, deletedRows } = fakeDb(['u/a-final-1.mp4', null], ['u/c1.mov', null]);
     await deleteVideosWithFiles(db, [
       { id: 'a', output_path: 'u/a.mp4', thumbnail_path: 'u/a.jpg', raw_path: null },
       { id: 'b', output_path: null, thumbnail_path: null, raw_path: 'u/b.mov' },
     ]);
     expect(removed['cuts']).toEqual(['u/a.mp4', 'u/a.jpg', 'u/a-final-1.mp4']);
-    expect(removed['raw-uploads']).toEqual(['u/b.mov']);
+    expect(removed['raw-uploads']).toEqual(['u/b.mov', 'u/c1.mov']);
     expect(deletedRows).toEqual(['a', 'b']);
   });
 });

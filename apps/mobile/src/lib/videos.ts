@@ -16,60 +16,113 @@ const VIDEO_COLUMNS =
 
 export type VideoSummary = Omit<VideoRow, 'transcript'>;
 
-export type BatchItem = { video: PickedVideo; mode: EditMode; pacing: Pacing };
+export type BatchItem = {
+  /** One clip = Single Clip; several = Multiple Clips, combined into one video. */
+  clips: PickedVideo[];
+  /** Voiceover Mode's separate voice recording. */
+  voice: PickedVideo | null;
+  mode: EditMode;
+  pacing: Pacing;
+};
+
+/** A file to upload for a video: stored under the video's id (single clip) or its clip row's id. */
+export type UploadFile = { objectId: string; file: PickedVideo };
+
+export type CreatedVideo = { row: VideoSummary; files: UploadFile[] };
+
+/** Multiple Clips and Voiceover need a row per file; a single clip uploads under the video's id. */
+function usesClipRows(item: BatchItem): boolean {
+  return item.clips.length > 1 || item.voice !== null;
+}
 
 /**
- * Creates the batch and one row per video before any upload starts, so every
- * video's status is tracked from the first byte. Rows come back in item order.
+ * Creates the batch and one row per video (plus clip rows where needed)
+ * before any upload starts, so status is tracked from the first byte.
  */
-export async function createBatch(items: BatchItem[]): Promise<VideoSummary[]> {
+export async function createBatch(items: BatchItem[]): Promise<CreatedVideo[]> {
   const { data: batch, error: batchError } = await supabase.from('batches').insert({}).select('id').single();
   if (batchError) throw batchError;
-  const rows: VideoSummary[] = [];
+  const created: CreatedVideo[] = [];
   // One insert per video keeps the order explicit; a batch is at most 10.
   for (const item of items) {
+    const duration = item.clips.every((c) => c.duration != null)
+      ? item.clips.reduce((sum, c) => sum + (c.duration ?? 0), 0)
+      : null;
     const { data, error } = await supabase
       .from('videos')
-      .insert({ batch_id: batch.id, mode: item.mode, pacing: item.pacing, source_duration_s: item.video.duration })
+      .insert({
+        batch_id: batch.id,
+        mode: item.mode,
+        pacing: item.pacing,
+        clip_type: item.clips.length > 1 ? 'multiple' : 'single',
+        source_duration_s: duration,
+      })
       .select(VIDEO_COLUMNS)
       .single();
     if (error) throw error;
-    rows.push(data as VideoSummary);
+    const row = data as VideoSummary;
+
+    if (!usesClipRows(item)) {
+      created.push({ row, files: [{ objectId: row.id, file: item.clips[0] }] });
+      continue;
+    }
+    const entries = [
+      ...item.clips.map((file, position) => ({ kind: 'clip' as const, position, file })),
+      ...(item.voice ? [{ kind: 'voice' as const, position: 0, file: item.voice }] : []),
+    ];
+    const { data: clipRows, error: clipError } = await supabase
+      .from('clips')
+      .insert(entries.map((e) => ({ video_id: row.id, kind: e.kind, position: e.position, duration_s: e.file.duration })))
+      .select('id, kind, position');
+    if (clipError) throw clipError;
+    created.push({
+      row,
+      files: entries.map((e) => ({
+        objectId: clipRows.find((c) => c.kind === e.kind && c.position === e.position)!.id as string,
+        file: e.file,
+      })),
+    });
   }
-  return rows;
+  return created;
 }
 
-function extensionFor(video: PickedVideo): string {
-  const fromName = video.fileName?.match(/\.(\w+)$/)?.[1];
+const MIME_EXTENSIONS: Record<string, string> = {
+  'video/quicktime': 'mov',
+  'video/mp4': 'mp4',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/m4a': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/aac': 'aac',
+};
+
+function extensionFor(file: PickedVideo): string {
+  const fromName = file.fileName?.match(/\.(\w+)$/)?.[1];
   if (fromName) return fromName.toLowerCase();
-  return video.mimeType === 'video/quicktime' ? 'mov' : 'mp4';
+  return MIME_EXTENSIONS[file.mimeType] ?? 'mp4';
 }
 
 /**
- * Streams the file straight from disk to Supabase Storage (it never gets
+ * Streams a file straight from disk to Supabase Storage (it never gets
  * loaded into JS memory). The signed URL doesn't depend on the login session,
  * and on iOS the native background session keeps sending while the app is in
- * the background. The server queues the video as soon as the file lands.
+ * the background. The server queues the video once all its files have landed.
  */
-export async function uploadRaw(
-  videoRow: Pick<VideoSummary, 'id' | 'user_id'>,
-  video: PickedVideo,
-  onProgress: (fraction: number) => void,
-): Promise<string> {
-  const path = `${videoRow.user_id}/${videoRow.id}.${extensionFor(video)}`;
-  const { data, error } = await supabase.storage
-    .from(STORAGE_BUCKETS.raw)
-    .createSignedUploadUrl(path, { upsert: true });
+export async function uploadFile(userId: string, upload: UploadFile, onProgress: (fraction: number) => void): Promise<string> {
+  const path = `${userId}/${upload.objectId}.${extensionFor(upload.file)}`;
+  const { data, error } = await supabase.storage.from(STORAGE_BUCKETS.raw).createSignedUploadUrl(path, { upsert: true });
   if (error) throw error;
 
-  const task = new File(video.uri).createUploadTask(data.signedUrl, {
+  const task = new File(upload.file.uri).createUploadTask(data.signedUrl, {
     httpMethod: 'PUT',
     headers: {
       apikey: SUPABASE_ANON_KEY,
       'x-upsert': 'true',
-      'Content-Type': video.mimeType,
+      'Content-Type': upload.file.mimeType,
     },
-    mimeType: video.mimeType,
+    mimeType: upload.file.mimeType,
     sessionType: 'background',
     onProgress: ({ bytesSent, totalBytes }) => {
       if (totalBytes > 0) onProgress(bytesSent / totalBytes);
@@ -83,12 +136,13 @@ export async function uploadRaw(
 }
 
 /**
- * Hands the uploaded video to the editing queue. The storage trigger normally
- * does this already; this also re-queues a video whose editing failed.
+ * Re-queues a video whose files are all on the server: after a failed edit,
+ * or as a backup to the storage trigger. Returns false if files are missing.
  */
-export async function submitVideo(videoId: string, rawPath: string): Promise<void> {
-  const { error } = await supabase.from('videos').update({ raw_path: rawPath, status: 'queued', error: null }).eq('id', videoId);
+export async function retryVideo(videoId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('retry_video', { p_video_id: videoId });
   if (error) throw error;
+  return Boolean(data);
 }
 
 export async function markUploadFailed(videoId: string, message: string): Promise<void> {

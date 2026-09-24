@@ -3,10 +3,10 @@ import { useSyncExternalStore } from 'react';
 
 import {
   markUploadFailed,
-  submitVideo,
-  uploadRaw,
+  retryVideo,
+  uploadFile,
   withRetries,
-  type PickedVideo,
+  type UploadFile,
   type VideoSummary,
 } from '@/lib/videos';
 
@@ -17,10 +17,16 @@ import {
  * being closed picks up again the next time the Batch tab opens.
  */
 
-export type UploadJob = { videoId: string; userId: string; video: PickedVideo };
+export type UploadJob = {
+  videoId: string;
+  userId: string;
+  files: UploadFile[];
+  /** Files already on the server, so a retry only re-sends the rest. */
+  done?: string[];
+};
 export type UploadState = { progress: number; failed: boolean };
 
-const STORAGE_KEY = 'pendingUploads.v1';
+const STORAGE_KEY = 'pendingUploads.v2';
 
 let states: ReadonlyMap<string, UploadState> = new Map();
 const listeners = new Set<() => void>();
@@ -69,14 +75,32 @@ const running = new Set<string>();
 async function runUpload(job: UploadJob): Promise<void> {
   if (running.has(job.videoId)) return;
   running.add(job.videoId);
-  setState(job.videoId, { progress: 0, failed: false });
+  const done = new Set(job.done ?? []);
+  const progress = new Map(job.files.map((f) => [f.objectId, done.has(f.objectId) ? 1 : 0]));
+  const report = () => {
+    const values = [...progress.values()];
+    setState(job.videoId, { progress: values.reduce((a, b) => a + b, 0) / values.length, failed: false });
+  };
+  report();
   try {
-    const row = { id: job.videoId, user_id: job.userId };
-    const rawPath = await withRetries(() =>
-      uploadRaw(row, job.video, (progress) => setState(job.videoId, { progress, failed: false })),
+    // All files at once, so iOS keeps sending every one in the background.
+    await Promise.all(
+      job.files
+        .filter((f) => !done.has(f.objectId))
+        .map(async (f) => {
+          await withRetries(() =>
+            uploadFile(job.userId, f, (fraction) => {
+              progress.set(f.objectId, fraction);
+              report();
+            }),
+          );
+          await updatePending((p) => {
+            if (p[job.videoId]) p[job.videoId].done = [...(p[job.videoId].done ?? []), f.objectId];
+          });
+        }),
     );
     // The storage trigger has queued it by now; this is a harmless backup.
-    await submitVideo(job.videoId, rawPath).catch(() => {});
+    await retryVideo(job.videoId).catch(() => {});
     await updatePending((p) => delete p[job.videoId]);
     setState(job.videoId, null);
   } catch (err) {

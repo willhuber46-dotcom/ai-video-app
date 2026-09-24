@@ -54,7 +54,11 @@ export async function deleteVideosWithFiles(db: SupabaseClient, videos: VideoFil
     ...videos.flatMap((v) => [v.output_path, v.thumbnail_path]),
     ...(renders ?? []).map((r) => r.output_path as string | null),
   ].filter((p): p is string => Boolean(p));
-  const rawFiles = videos.map((v) => v.raw_path).filter((p): p is string => Boolean(p));
+  const { data: clips, error: clipError } = await db.from('clips').select('raw_path').in('video_id', ids);
+  if (clipError) throw clipError;
+  const rawFiles = [...videos.map((v) => v.raw_path), ...(clips ?? []).map((c) => c.raw_path as string | null)].filter(
+    (p): p is string => Boolean(p),
+  );
 
   if (cutFiles.length) {
     const { error: e } = await db.storage.from(STORAGE_BUCKETS.cuts).remove(cutFiles);

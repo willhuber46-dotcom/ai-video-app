@@ -34,7 +34,7 @@ export const MODES: readonly ModeInfo[] = [
       "For videos where you're just showing off a product, like outfits, home decor, or gadgets. We ignore the audio and cut to your best angles and moments.",
     note: "This mode doesn't use audio.",
     bestClipType: 'multiple',
-    available: false,
+    available: true,
   },
   {
     key: 'voiceover',
@@ -43,7 +43,7 @@ export const MODES: readonly ModeInfo[] = [
     description:
       'Film your product clips, then record your voice separately. We match your clips to what you’re saying.',
     bestClipType: 'multiple',
-    available: false,
+    available: true,
   },
   {
     key: 'before_after',
@@ -52,7 +52,7 @@ export const MODES: readonly ModeInfo[] = [
     description:
       'For transformations like cleaning, beauty, hair, or organizing. We find your before and after moments and add a smooth transition between them.',
     bestClipType: 'multiple',
-    available: false,
+    available: true,
   },
   {
     key: 'unboxing_asmr',
@@ -61,7 +61,7 @@ export const MODES: readonly ModeInfo[] = [
     description:
       'For unboxings and satisfying product videos. We keep the good sounds (tearing, clicking, pouring) and cut the slow parts.',
     bestClipType: 'multiple',
-    available: false,
+    available: true,
   },
 ];
 
@@ -78,3 +78,8 @@ export const PACING_OPTIONS: readonly { key: Pacing; label: string }[] = [
   { key: 'natural', label: 'Natural' },
   { key: 'loose', label: 'Loose' },
 ];
+
+/** Modes where Tight / Natural / Loose changes the edit. */
+export function usesPacing(mode: EditMode): boolean {
+  return mode === 'talking' || mode === 'voiceover' || mode === 'unboxing_asmr';
+}

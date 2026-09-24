@@ -259,7 +259,6 @@ export default function EditorScreen() {
   const frameWidth = Math.min(window.width - SIDE * 2, window.height * 0.5 * aspect);
   const frameHeight = frameWidth / aspect;
   const zoom = zoomAt(doc.zooms, time);
-  const removed = video?.edit_decisions?.removed;
   const saving = saveState !== 'idle';
 
   return (
@@ -321,7 +320,7 @@ export default function EditorScreen() {
             <ThemedText type="small" themeColor="textSecondary">
               {formatDuration(time)} / {formatDuration(duration)}
             </ThemedText>
-            {removed && video && (
+            {video?.source_duration_s != null && (
               <ThemedText type="small" themeColor="textSecondary">
                 {formatDuration(video.source_duration_s)} cut to {formatDuration(video.output_duration_s)}
               </ThemedText>

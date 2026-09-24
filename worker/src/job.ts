@@ -13,7 +13,9 @@ import { notifyIfBatchComplete, type PushSender } from './notify';
 import { renderFinal } from './render';
 import type { RetakeDetector } from './retakes';
 import type { SuggestionGenerator } from './suggestions';
-import { editTalkingVideo, UserFacingError } from './talking';
+import type { ModeAi } from './mode-ai';
+import { editVideo } from './modes';
+import { UserFacingError } from './talking';
 import type { Transcriber } from './transcribe';
 
 export type JobDeps = {
@@ -21,6 +23,7 @@ export type JobDeps = {
   transcriber: Transcriber;
   retakes: RetakeDetector;
   suggestions: SuggestionGenerator;
+  ai: ModeAi;
   push: PushSender;
   tmpDir: string;
 };
@@ -37,24 +40,43 @@ export async function processVideo(video: VideoRow, deps: JobDeps): Promise<void
   const { db } = deps;
   const workDir = path.join(deps.tmpDir, video.id);
   await mkdir(workDir, { recursive: true });
+  let rawPaths: string[] = [];
 
   try {
-    if (video.mode !== 'talking') throw new UserFacingError('This mode is coming soon.');
-    if (!video.raw_path) throw new Error('Video has no raw_path');
+    // Multiple Clips and Voiceover videos have a row per file; single clips use raw_path.
+    const { data: clipRows, error: clipError } = await db
+      .from('clips')
+      .select('kind, position, raw_path')
+      .eq('video_id', video.id)
+      .order('position');
+    if (clipError) throw clipError;
+    const files = clipRows?.length
+      ? clipRows.map((c) => ({ kind: c.kind as 'clip' | 'voice', rawPath: c.raw_path as string | null }))
+      : [{ kind: 'clip' as const, rawPath: video.raw_path }];
+    if (files.some((f) => !f.rawPath)) throw new Error('Video has files that were never uploaded');
+    rawPaths = files.map((f) => f.rawPath as string);
 
-    const inputPath = path.join(workDir, 'input' + (path.extname(video.raw_path) || '.mp4'));
-    await download(db, STORAGE_BUCKETS.raw, video.raw_path, inputPath);
+    const clipPaths: string[] = [];
+    let voicePath: string | null = null;
+    for (const [i, f] of files.entries()) {
+      const local = path.join(workDir, `${f.kind}-${i}${path.extname(f.rawPath!) || '.mp4'}`);
+      await download(db, STORAGE_BUCKETS.raw, f.rawPath!, local);
+      if (f.kind === 'voice') voicePath = local;
+      else clipPaths.push(local);
+    }
 
     const { data: profile } = await db.from('profiles').select('record_language').eq('id', video.user_id).single();
 
-    const result = await editTalkingVideo({
-      inputPath,
+    const result = await editVideo(video.mode, {
+      clipPaths,
+      voicePath,
       workDir,
       pacing: video.pacing,
       language: profile?.record_language ?? 'en',
       transcriber: deps.transcriber,
       retakes: deps.retakes,
       suggestions: deps.suggestions,
+      ai: deps.ai,
     });
 
     const outputPath = `${video.user_id}/${video.id}.mp4`;
@@ -77,6 +99,8 @@ export async function processVideo(video: VideoRow, deps: JobDeps): Promise<void
         transcript: result.transcript,
         ai_suggestions: result.suggestions,
         edit_decisions: result.decisions,
+        // Text the mode adds (e.g. Before/After labels) starts out in the editable overlays.
+        ...(result.overlays ? { overlays: result.overlays } : {}),
         completed_at: now.toISOString(),
         expires_at: new Date(now.getTime() + CUT_RETENTION_DAYS * 86_400_000).toISOString(),
         raw_path: null,
@@ -85,8 +109,9 @@ export async function processVideo(video: VideoRow, deps: JobDeps): Promise<void
     if (updateError) throw updateError;
 
     // Raw uploads are deleted once editing finishes.
-    const { error: removeError } = await db.storage.from(STORAGE_BUCKETS.raw).remove([video.raw_path]);
-    if (removeError) console.warn(`Could not delete raw upload ${video.raw_path}`, removeError);
+    const { error: removeError } = await db.storage.from(STORAGE_BUCKETS.raw).remove(rawPaths);
+    if (removeError) console.warn(`Could not delete raw uploads for ${video.id}`, removeError);
+    await db.from('clips').update({ raw_path: null }).eq('video_id', video.id);
 
     await logCosts(db, video, result.costs);
     console.log(

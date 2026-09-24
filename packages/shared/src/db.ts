@@ -44,6 +44,14 @@ export type EditDecisions = {
   cutSource: 'transcript' | 'silence';
 };
 
+/** What a non-talking mode kept: pieces of the input clips, in play order. */
+export type ClipDecisions = {
+  mode: EditMode;
+  segments: { clip: number; start: number; end: number }[];
+  /** Who made the creative choices. */
+  source: 'ai' | 'heuristic';
+};
+
 export type VideoRow = {
   id: string;
   user_id: string;
@@ -61,7 +69,7 @@ export type VideoRow = {
   output_width: number | null;
   output_height: number | null;
   transcript: WordTiming[] | null;
-  edit_decisions: EditDecisions | null;
+  edit_decisions: EditDecisions | ClipDecisions | null;
   /** The user's captions, text and zooms (Phase 2). */
   overlays: OverlayDoc | null;
   ai_suggestions: AiSuggestions | null;

@@ -1,10 +1,11 @@
 import path from 'node:path';
 
-import { MAX_INPUT_SECONDS, type AiSuggestions, type EditDecisions, type Pacing, type WordTiming } from '@app/shared';
+import { MAX_INPUT_SECONDS, type EditDecisions, type Pacing, type WordTiming } from '@app/shared';
 
-import { computeCost, type CostEntry } from './costs';
+import type { CostEntry } from './costs';
 import { computeSilenceEdit, computeTalkingEdit, remapWords, splitSentences } from './cuts';
-import { detectSilences, extractAudio, extractFrames, makeThumbnail, probe, renderKeepRanges } from './ffmpeg';
+import { detectSilences, extractAudio, probe, renderKeepRanges } from './ffmpeg';
+import { finishCut, type ModeResult } from './finish';
 import type { RetakeDetector } from './retakes';
 import type { SuggestionGenerator } from './suggestions';
 import type { Transcriber } from './transcribe';
@@ -12,26 +13,7 @@ import type { Transcriber } from './transcribe';
 /** An error whose message is safe and helpful to show in the app. */
 export class UserFacingError extends Error {}
 
-export type TalkingEditResult = {
-  outputPath: string;
-  thumbnailPath: string;
-  sourceDuration: number;
-  outputDuration: number;
-  outputWidth: number;
-  outputHeight: number;
-  decisions: EditDecisions;
-  /** Kept words on the edited video's timeline, for captions. */
-  transcript: WordTiming[];
-  /** Text and zoom ideas for the editing tools. */
-  suggestions: AiSuggestions;
-  costs: CostEntry[];
-};
-
-/** Number of stills the AI looks at: one per ~5s, between 2 and 6. */
-function frameTimes(duration: number): number[] {
-  const count = Math.min(6, Math.max(2, Math.round(duration / 5)));
-  return Array.from({ length: count }, (_, i) => ((i + 0.5) * duration) / count);
-}
+export type TalkingEditResult = ModeResult & { decisions: EditDecisions };
 
 /**
  * Talking Mode: transcribe, drop fillers/retakes/dead air, render. Works on
@@ -91,32 +73,14 @@ export async function editTalkingVideo(opts: {
 
   const outputPath = path.join(opts.workDir, 'cut.mp4');
   await renderKeepRanges({ input: opts.inputPath, keep: decisions.keep, output: outputPath, workDir: opts.workDir, source });
-  const output = await probe(outputPath);
-
-  const thumbnailPath = path.join(opts.workDir, 'thumb.jpg');
-  await makeThumbnail(outputPath, thumbnailPath, Math.min(1, output.duration / 3));
-
-  const times = frameTimes(output.duration);
-  const framePaths = await extractFrames(outputPath, times, opts.workDir);
-  const { suggestions, cost: suggestionCost } = await opts.suggestions.suggest({
-    transcript,
-    duration: output.duration,
-    frames: framePaths.map((path, i) => ({ path, time: times[i] })),
-  });
-  if (suggestionCost) costs.push(suggestionCost);
-
-  costs.push(computeCost((Date.now() - started) / 1000));
-
-  return {
+  const finished = await finishCut({
     outputPath,
-    thumbnailPath,
-    sourceDuration: source.duration,
-    outputDuration: output.duration,
-    outputWidth: output.width,
-    outputHeight: output.height,
-    decisions,
+    workDir: opts.workDir,
     transcript,
-    suggestions,
+    suggestions: opts.suggestions,
     costs,
-  };
+    started,
+  });
+
+  return { outputPath, sourceDuration: source.duration, decisions, transcript, costs, ...finished };
 }

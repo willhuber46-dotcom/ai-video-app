@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { loadWorkerConfig } from './config';
 import { claimNextRender, claimNextVideo, processRender, processVideo, type JobDeps } from './job';
 import { runMaintenance } from './maintenance';
+import { ClaudeModeAi, NoModeAi } from './mode-ai';
 import { ExpoPushSender } from './notify';
 import { ClaudeRetakeDetector, HeuristicRetakeDetector, ResilientRetakeDetector } from './retakes';
 import { ClaudeSuggestionGenerator, HeuristicSuggestionGenerator, ResilientSuggestionGenerator } from './suggestions';
@@ -24,6 +25,7 @@ const deps: JobDeps = {
   suggestions: config.anthropicEnabled
     ? new ResilientSuggestionGenerator(new ClaudeSuggestionGenerator())
     : new HeuristicSuggestionGenerator(),
+  ai: config.anthropicEnabled ? new ClaudeModeAi() : new NoModeAi(),
   push: new ExpoPushSender(config.expoAccessToken),
   tmpDir: config.tmpDir,
 };

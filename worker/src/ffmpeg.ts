@@ -98,33 +98,47 @@ const SCALE =
 
 const FADE_SECONDS = 0.012;
 
+/** Where a segment comes from: a range of one input file. */
+export type SourceRange = { input: string; source: ProbeResult; start: number; end: number };
+
 /**
- * Renders the kept ranges into one MP4. Each range is encoded on its own with
- * identical settings (so timestamps stay correct even for variable-frame-rate
- * phone video), then the pieces are joined without re-encoding.
+ * Renders ranges (from one or several inputs) into one MP4. Each range is
+ * encoded on its own with identical settings, so timestamps stay correct even
+ * for variable-frame-rate phone video, then the pieces are joined without
+ * re-encoding.
+ *
+ * - `size`: fill a fixed frame (e.g. 1080x1920), cropping the edges, so clips
+ *   filmed differently still match. Without it, the source size is kept.
+ * - `audio: 'silent'` replaces the sound with silence (No Talking, Voiceover).
  */
-export async function renderKeepRanges(opts: {
-  input: string;
-  keep: KeepRange[];
+export async function renderSegments(opts: {
+  ranges: SourceRange[];
   output: string;
   workDir: string;
-  source: ProbeResult;
+  size?: { width: number; height: number };
+  audio?: 'keep' | 'silent';
+  /** Prefix for the temporary segment files. */
+  tag?: string;
 }): Promise<void> {
-  const { input, keep, output, workDir, source } = opts;
-  if (keep.length === 0) throw new Error('Nothing to render');
-  const fps = outputFps(source.fps);
+  const { ranges, output, workDir, size, audio = 'keep', tag = 'seg' } = opts;
+  if (ranges.length === 0) throw new Error('Nothing to render');
+  const fps = outputFps(Math.max(...ranges.map((r) => r.source.fps)));
+  const scale = size
+    ? `scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height},setsar=1`
+    : SCALE;
 
-  const segments = keep.map((_, i) => path.join(workDir, `seg-${String(i).padStart(4, '0')}.mp4`));
+  const files = ranges.map((_, i) => path.join(workDir, `${tag}-${String(i).padStart(4, '0')}.mp4`));
 
-  const encode = (range: KeepRange, out: string) => {
+  const encode = (range: SourceRange, out: string) => {
     const d = Math.max(0.05, range.end - range.start);
     const fadeOutAt = Math.max(0, d - FADE_SECONDS);
-    const args = ['-y', '-ss', range.start.toFixed(3), '-t', d.toFixed(3), '-i', input];
-    if (!source.hasAudio) args.push('-f', 'lavfi', '-t', d.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo');
+    const useSource = audio === 'keep' && range.source.hasAudio;
+    const args = ['-y', '-ss', range.start.toFixed(3), '-t', d.toFixed(3), '-i', range.input];
+    if (!useSource) args.push('-f', 'lavfi', '-t', d.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo');
     args.push(
       '-map', '0:v:0',
-      '-map', source.hasAudio ? '0:a:0' : '1:a:0',
-      '-vf', SCALE,
+      '-map', useSource ? '0:a:0' : '1:a:0',
+      '-vf', scale,
       // Tiny fades stop audible clicks at every cut.
       '-af', `afade=t=in:d=${FADE_SECONDS},afade=t=out:st=${fadeOutAt.toFixed(3)}:d=${FADE_SECONDS}`,
       '-fps_mode', 'cfr', '-r', String(fps),
@@ -141,24 +155,80 @@ export async function renderKeepRanges(opts: {
   const CONCURRENCY = 2;
   let next = 0;
   await Promise.all(
-    Array.from({ length: Math.min(CONCURRENCY, keep.length) }, async () => {
-      while (next < keep.length) {
+    Array.from({ length: Math.min(CONCURRENCY, ranges.length) }, async () => {
+      while (next < ranges.length) {
         const i = next++;
-        await encode(keep[i], segments[i]);
+        await encode(ranges[i], files[i]);
       }
     }),
   );
 
-  const listFile = path.join(workDir, 'segments.txt');
-  await writeFile(listFile, segments.map((s) => `file '${path.resolve(s)}'`).join('\n'));
+  const listFile = path.join(workDir, `${tag}-list.txt`);
+  await writeFile(listFile, files.map((s) => `file '${path.resolve(s)}'`).join('\n'));
   await run(FFMPEG, ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', '-movflags', '+faststart', output]);
 }
 
+/** Talking Mode: kept ranges of a single input. */
+export async function renderKeepRanges(opts: {
+  input: string;
+  keep: KeepRange[];
+  output: string;
+  workDir: string;
+  source: ProbeResult;
+}): Promise<void> {
+  await renderSegments({
+    ranges: opts.keep.map((r) => ({ input: opts.input, source: opts.source, start: r.start, end: r.end })),
+    output: opts.output,
+    workDir: opts.workDir,
+  });
+}
+
+/** Joins two rendered pieces with a wipe (video) and crossfade (audio). */
+export async function joinWithTransition(a: string, b: string, output: string, seconds = 0.6): Promise<void> {
+  const first = await probe(a);
+  const offset = Math.max(0, first.duration - seconds);
+  await run(FFMPEG, [
+    '-y', '-i', a, '-i', b,
+    '-filter_complex',
+    `[0:v][1:v]xfade=transition=wipeleft:duration=${seconds}:offset=${offset.toFixed(3)},format=yuv420p[v];` +
+      `[0:a][1:a]acrossfade=d=${seconds}[a]`,
+    '-map', '[v]', '-map', '[a]',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+    '-c:a', 'aac', '-b:a', '160k',
+    '-movflags', '+faststart',
+    output,
+  ]);
+}
+
+/** Replaces a video's sound with an audio file (Voiceover). */
+export async function replaceAudio(video: string, audio: string, output: string): Promise<void> {
+  await run(FFMPEG, [
+    '-y', '-i', video, '-i', audio,
+    '-map', '0:v:0', '-map', '1:a:0',
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2',
+    '-shortest', '-movflags', '+faststart',
+    output,
+  ]);
+}
+
+/** Cuts an audio file down to the kept ranges, with tiny fades at each join (Voiceover). */
+export async function renderAudioRanges(input: string, keep: KeepRange[], output: string, workDir: string): Promise<void> {
+  if (keep.length === 0) throw new Error('Nothing to render');
+  const parts = keep.map(
+    (r, i) =>
+      `[0:a]atrim=start=${r.start.toFixed(3)}:end=${r.end.toFixed(3)},asetpts=PTS-STARTPTS,` +
+      `afade=t=in:d=${FADE_SECONDS},afade=t=out:st=${Math.max(0, r.end - r.start - FADE_SECONDS).toFixed(3)}:d=${FADE_SECONDS}[a${i}]`,
+  );
+  const script = path.join(workDir, 'voice-filters.txt');
+  await writeFile(script, `${parts.join(';\n')};\n${keep.map((_, i) => `[a${i}]`).join('')}concat=n=${keep.length}:v=0:a=1[out]`);
+  await run(FFMPEG, ['-y', '-i', input, '-filter_complex_script', script, '-map', '[out]', '-ar', '48000', '-ac', '2', '-c:a', 'pcm_s16le', output]);
+}
+
 /** Small JPEG stills at the given times, for the AI to look at. */
-export async function extractFrames(video: string, times: number[], workDir: string): Promise<string[]> {
+export async function extractFrames(video: string, times: number[], workDir: string, prefix = 'frame'): Promise<string[]> {
   const files: string[] = [];
   for (const [i, t] of times.entries()) {
-    const out = path.join(workDir, `frame-${i}.jpg`);
+    const out = path.join(workDir, `${prefix}-${i}.jpg`);
     await run(FFMPEG, ['-y', '-ss', t.toFixed(3), '-i', video, '-frames:v', '1', '-vf', 'scale=384:-2', '-q:v', '5', out]);
     files.push(out);
   }

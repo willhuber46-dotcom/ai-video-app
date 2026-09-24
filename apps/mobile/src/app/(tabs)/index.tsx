@@ -1,4 +1,5 @@
-import { BATCH_LIMIT, getMode, MAX_INPUT_SECONDS, type EditMode, type Pacing } from '@app/shared';
+import { BATCH_LIMIT, MAX_INPUT_SECONDS, type EditMode, type Pacing } from '@app/shared';
+import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect } from 'expo-router';
 import * as VideoThumbnails from 'expo-video-thumbnails';
@@ -9,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BatchCard } from '@/components/batch/batch-card';
 import { DraftItem } from '@/components/batch/draft-item';
 import { ModeSheet } from '@/components/batch/mode-sheet';
+import { VoiceRecorder } from '@/components/batch/voice-recorder';
 import { Button } from '@/components/button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -20,21 +22,62 @@ import {
   createBatch,
   deleteVideo,
   fetchRecentVideos,
-  submitVideo,
+  retryVideo,
   type PickedVideo,
   type VideoSummary,
 } from '@/lib/videos';
 
 const POLL_MS = 3000;
 const BATCHES_SHOWN = 5;
+/** Clips combined into one video (Multiple Clips). */
+const MAX_CLIPS = 10;
 
 type Draft = {
   key: string;
-  video: PickedVideo;
+  /** One clip = Single Clip; more = Multiple Clips. */
+  clips: PickedVideo[];
+  voice: PickedVideo | null;
   thumbnail: string | null;
   mode: EditMode;
   pacing: Pacing;
 };
+
+let draftCounter = 0;
+const draftKey = () => `draft-${Date.now()}-${draftCounter++}`;
+
+/** Opens the camera roll for up to `limit` videos, turning away ones over 10 minutes. */
+async function pickVideos(limit: number): Promise<PickedVideo[]> {
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ['videos'],
+    allowsMultipleSelection: limit > 1,
+    selectionLimit: limit,
+    orderedSelection: true,
+    // Hand over the original files instead of re-encoded copies.
+    preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+  });
+  if (result.canceled) return [];
+  const tooLong = result.assets.filter((a) => a.duration != null && a.duration / 1000 > MAX_INPUT_SECONDS + 1);
+  if (tooLong.length) {
+    Alert.alert(
+      tooLong.length === 1 ? '1 video is too long' : `${tooLong.length} videos are too long`,
+      'Videos can be up to 10 minutes long. Trim them in Photos and add them again.',
+    );
+  }
+  return result.assets
+    .filter((a) => !tooLong.includes(a))
+    .slice(0, limit)
+    .map((a) => ({
+      uri: a.uri,
+      duration: a.duration != null ? a.duration / 1000 : null,
+      mimeType: a.mimeType ?? 'video/mp4',
+      fileName: a.fileName ?? null,
+    }));
+}
+
+/** Seconds of footage in a draft, or null if a clip's length is unknown. */
+function draftDuration(draft: Draft): number | null {
+  return draft.clips.every((c) => c.duration != null) ? draft.clips.reduce((s, c) => s + (c.duration ?? 0), 0) : null;
+}
 
 /** Which draft the mode sheet is editing, or 'all' for "Set all to...". */
 type SheetTarget = { kind: 'all' } | { kind: 'item'; key: string };
@@ -58,6 +101,7 @@ export default function BatchScreen() {
   const [sheet, setSheet] = useState<SheetTarget | null>(null);
   const [starting, setStarting] = useState(false);
   const [recent, setRecent] = useState<VideoSummary[]>([]);
+  const [recordingFor, setRecordingFor] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -87,46 +131,85 @@ export default function BatchScreen() {
 
   const remaining = BATCH_LIMIT - drafts.length;
 
-  async function addVideos() {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['videos'],
-      allowsMultipleSelection: true,
-      selectionLimit: remaining,
-      orderedSelection: true,
-      // Hand over the original files instead of re-encoded copies.
-      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
-    });
-    if (result.canceled) return;
-
-    const tooLong = result.assets.filter((a) => a.duration != null && a.duration / 1000 > MAX_INPUT_SECONDS + 1);
-    const accepted = result.assets.filter((a) => !tooLong.includes(a)).slice(0, remaining);
-    if (tooLong.length) {
-      Alert.alert(
-        tooLong.length === 1 ? '1 video is too long' : `${tooLong.length} videos are too long`,
-        'Videos can be up to 10 minutes long. Trim them in Photos and add them again.',
-      );
-    }
-    // New videos start with the mode of the last one, so "Set all" is rarely needed.
-    const last = drafts[drafts.length - 1];
-    const added: Draft[] = accepted.map((asset, i) => ({
-      key: `${Date.now()}-${i}-${asset.uri}`,
-      video: {
-        uri: asset.uri,
-        duration: asset.duration != null ? asset.duration / 1000 : null,
-        mimeType: asset.mimeType ?? 'video/mp4',
-        fileName: asset.fileName ?? null,
-      },
-      thumbnail: null,
-      mode: last?.mode ?? 'talking',
-      pacing: last?.pacing ?? 'natural',
-    }));
-    setDrafts((d) => [...d, ...added]);
-
+  function withThumbnails(added: Draft[]) {
     for (const draft of added) {
-      VideoThumbnails.getThumbnailAsync(draft.video.uri, { time: 500 })
+      VideoThumbnails.getThumbnailAsync(draft.clips[0].uri, { time: 500 })
         .then((t) => setDrafts((d) => d.map((x) => (x.key === draft.key ? { ...x, thumbnail: t.uri } : x))))
         .catch(() => {});
     }
+  }
+
+  function newDraft(clips: PickedVideo[], like?: Draft): Draft {
+    // New videos start with the mode of the last one, so "Set all" is rarely needed.
+    return {
+      key: draftKey(),
+      clips,
+      voice: null,
+      thumbnail: null,
+      mode: like?.mode ?? 'talking',
+      pacing: like?.pacing ?? 'natural',
+    };
+  }
+
+  async function addVideos() {
+    // Up to 10 separate videos, or up to 10 clips combined into one.
+    const picked = await pickVideos(Math.max(remaining, MAX_CLIPS));
+    if (picked.length === 0) return;
+    const last = drafts[drafts.length - 1];
+    const add = (added: Draft[]) => {
+      setDrafts((d) => [...d, ...added]);
+      withThumbnails(added);
+    };
+    if (picked.length === 1) return add([newDraft(picked, last)]);
+
+    const separate = () => {
+      if (picked.length > remaining) {
+        Alert.alert(
+          'Batch is full',
+          `Only ${remaining} more ${remaining === 1 ? 'video fits' : 'videos fit'} in this batch.`,
+        );
+      }
+      add(picked.slice(0, remaining).map((clip) => newDraft([clip], last)));
+    };
+    if (remaining === 0) {
+      Alert.alert('Batch is full', `A batch holds ${BATCH_LIMIT} videos.`);
+      return;
+    }
+    Alert.alert(`${picked.length} videos selected`, 'Edit them as separate videos, or combine them into one?', [
+      { text: 'Separate videos', onPress: separate },
+      { text: 'Combine into one', onPress: () => add([newDraft(picked, last)]) },
+    ]);
+  }
+
+  async function addClips(key: string) {
+    const draft = drafts.find((d) => d.key === key);
+    if (!draft) return;
+    const picked = await pickVideos(MAX_CLIPS - draft.clips.length);
+    if (picked.length) setDrafts((d) => d.map((x) => (x.key === key ? { ...x, clips: [...x.clips, ...picked] } : x)));
+  }
+
+  function split(key: string) {
+    const index = drafts.findIndex((d) => d.key === key);
+    const draft = drafts[index];
+    if (!draft) return;
+    const room = remaining + 1;
+    if (draft.clips.length > room) {
+      Alert.alert('Not enough room', `Only ${room} ${room === 1 ? 'video fits' : 'videos fit'} in this batch.`);
+      return;
+    }
+    const parts = draft.clips.map((clip) => newDraft([clip], draft));
+    setDrafts((d) => [...d.slice(0, index), ...parts, ...d.slice(index + 1)]);
+    withThumbnails(parts);
+  }
+
+  const setVoice = (key: string, voice: PickedVideo | null) =>
+    setDrafts((d) => d.map((x) => (x.key === key ? { ...x, voice } : x)));
+
+  async function pickVoice(key: string) {
+    const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
+    const asset = result.canceled ? null : result.assets[0];
+    if (!asset) return;
+    setVoice(key, { uri: asset.uri, duration: null, mimeType: asset.mimeType ?? 'audio/mp4', fileName: asset.name });
   }
 
   function applySheet(mode: EditMode, pacing: Pacing) {
@@ -137,19 +220,34 @@ export default function BatchScreen() {
 
   async function startBatch() {
     if (!session || drafts.length === 0) return;
-    const unavailable = drafts.filter((d) => !getMode(d.mode).available);
-    if (unavailable.length) {
-      Alert.alert('Mode coming soon', `${getMode(unavailable[0].mode).name} isn’t available yet. Pick another mode.`);
+    const missingVoice = drafts.findIndex((d) => d.mode === 'voiceover' && !d.voice);
+    if (missingVoice >= 0) {
+      Alert.alert(
+        'Add your voice',
+        `Video ${missingVoice + 1} is in Voiceover Mode. Record or choose a voice recording.`,
+      );
+      return;
+    }
+    const tooLong = drafts.findIndex((d) => (draftDuration(d) ?? 0) > MAX_INPUT_SECONDS + 1);
+    if (tooLong >= 0) {
+      Alert.alert('Too long', `Video ${tooLong + 1}'s clips add up to more than 10 minutes. Remove some clips.`);
       return;
     }
     setStarting(true);
     try {
       // Ask once, at the moment it's useful: so we can say when the batch is done.
       void registerForPushNotifications({ prompt: true });
-      const rows = await createBatch(drafts.map((d) => ({ video: d.video, mode: d.mode, pacing: d.pacing })));
-      await enqueueUploads(rows.map((row, i) => ({ videoId: row.id, userId: row.user_id, video: drafts[i].video })));
+      const created = await createBatch(
+        drafts.map((d) => ({
+          clips: d.clips,
+          voice: d.mode === 'voiceover' ? d.voice : null,
+          mode: d.mode,
+          pacing: d.pacing,
+        })),
+      );
+      await enqueueUploads(created.map((c) => ({ videoId: c.row.id, userId: c.row.user_id, files: c.files })));
       setDrafts([]);
-      setRecent((r) => [...rows, ...r]);
+      setRecent((r) => [...created.map((c) => c.row), ...r]);
     } catch (err) {
       Alert.alert("Couldn't start editing", err instanceof Error ? err.message : 'Please try again.');
     } finally {
@@ -158,14 +256,14 @@ export default function BatchScreen() {
   }
 
   async function retry(video: VideoSummary) {
-    if (video.raw_path && video.status === 'failed') {
-      // Upload finished but editing failed: the raw file is still on the server.
-      try {
-        await submitVideo(video.id, video.raw_path);
+    try {
+      // Everything already on the server (e.g. the edit failed): just re-queue it.
+      if (await retryVideo(video.id)) {
         refresh();
-      } catch (err) {
-        Alert.alert("Couldn't retry", err instanceof Error ? err.message : 'Please try again.');
+        return;
       }
+    } catch (err) {
+      Alert.alert("Couldn't retry", err instanceof Error ? err.message : 'Please try again.');
       return;
     }
     if (await retryUpload(video.id)) return;
@@ -218,10 +316,17 @@ export default function BatchScreen() {
                   key={draft.key}
                   index={i}
                   thumbnail={draft.thumbnail}
-                  duration={draft.video.duration}
+                  clips={draft.clips}
+                  voice={draft.voice}
                   mode={draft.mode}
                   pacing={draft.pacing}
+                  canAddClips={draft.clips.length < MAX_CLIPS}
                   onPickMode={() => setSheet({ kind: 'item', key: draft.key })}
+                  onAddClips={() => addClips(draft.key)}
+                  onSplit={() => split(draft.key)}
+                  onRecordVoice={() => setRecordingFor(draft.key)}
+                  onPickVoice={() => pickVoice(draft.key)}
+                  onRemoveVoice={() => setVoice(draft.key, null)}
                   onRemove={() => setDrafts((d) => d.filter((x) => x.key !== draft.key))}
                 />
               ))}
@@ -268,6 +373,15 @@ export default function BatchScreen() {
           initialPacing={sheetDraft.pacing}
           onDone={applySheet}
           onCancel={() => setSheet(null)}
+        />
+      )}
+      {recordingFor && (
+        <VoiceRecorder
+          onDone={(voice) => {
+            setVoice(recordingFor, voice);
+            setRecordingFor(null);
+          }}
+          onCancel={() => setRecordingFor(null)}
         />
       )}
     </ThemedView>
